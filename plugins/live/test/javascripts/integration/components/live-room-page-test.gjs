@@ -27,6 +27,7 @@ class LiveWebrtcStub extends Service {
   @tracked pttEnabled = false;
 
   screenShareSupported = true;
+  watchingCalls = [];
 
   get activeRoom() {
     return this.liveRooms.roomById(this.activeRoomId);
@@ -68,7 +69,11 @@ class LiveWebrtcStub extends Service {
     return false;
   }
 
-  setWatching() {}
+  acquireVideoWatch(roomId) {
+    this.watchingCalls.push({ roomId, watching: true });
+    return () => this.watchingCalls.push({ roomId, watching: false });
+  }
+
   join() {}
   leave() {}
   toggleMute() {}
@@ -181,6 +186,47 @@ module("Integration | Component | Live | RoomPage", function (hooks) {
       };
       this.liveRooms.rooms = [this.room];
     };
+  });
+
+  test("room page watch follows room changes and teardown", async function (assert) {
+    this.set("showPage", true);
+    await render(
+      <template>
+        {{#if this.showPage}}
+          <LiveRoomPage @room={{this.room}} />
+        {{/if}}
+      </template>
+    );
+    assert.deepEqual(this.liveWebrtc.watchingCalls, [
+      { roomId: 1, watching: true },
+    ]);
+
+    this.set("room", { ...this.room, id: 2, slug: "second-room" });
+    this.liveRooms.rooms = [this.room];
+    await settled();
+    assert.deepEqual(
+      this.liveWebrtc.watchingCalls[1],
+      {
+        roomId: 1,
+        watching: false,
+      },
+      "releases the captured original room"
+    );
+    assert.deepEqual(
+      this.liveWebrtc.watchingCalls.at(-1),
+      {
+        roomId: 2,
+        watching: true,
+      },
+      "watches the replacement room"
+    );
+
+    this.set("showPage", false);
+    await settled();
+    assert.deepEqual(this.liveWebrtc.watchingCalls.at(-1), {
+      roomId: 2,
+      watching: false,
+    });
   });
 
   test("defaults to the tiled layout with the layout switcher available", async function (assert) {
