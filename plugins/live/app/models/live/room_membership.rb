@@ -21,6 +21,7 @@ module Live
 
     scope :moderator, -> { where(role: ROLE_MODERATOR) }
     scope :speaker, -> { where(role: ROLE_SPEAKER) }
+    scope :session_only, -> { where(session_only: true) }
 
     def moderator?
       role == ROLE_MODERATOR
@@ -50,6 +51,7 @@ module Live
 
     validates :room_id, presence: true
     validates :user_id, presence: true, uniqueness: { scope: :room_id }
+    validates :fallback_role, inclusion: { in: ROLES.values }, allow_nil: true
 
     private
 
@@ -76,10 +78,12 @@ end
 #
 # Table name: live_room_memberships
 #
-#  id         :bigint           not null, primary key
-#  role       :integer          default(0), not null
-#  created_at :datetime         not null
-#  updated_at :datetime         not null
+#  id            :bigint           not null, primary key
+#  fallback_role :integer
+#  role          :integer          default(0), not null
+#  session_only  :boolean          default(FALSE), not null
+#  created_at    :datetime         not null
+#  updated_at    :datetime         not null
 #  room_id    :bigint           not null
 #  user_id    :bigint           not null
 #

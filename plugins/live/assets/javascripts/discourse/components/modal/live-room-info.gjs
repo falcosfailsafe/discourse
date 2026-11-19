@@ -345,6 +345,11 @@ export default class LiveRoomInfoModal extends Component {
                           >
                             {{membership.role_name}}
                           </span>
+                          {{#if membership.session_only}}
+                            <span class="live-room-info-modal__member-session">
+                              ({{i18n "live.stage.session_only_badge"}})
+                            </span>
+                          {{/if}}
                         {{/if}}
                       </div>
 

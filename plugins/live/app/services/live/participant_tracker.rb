@@ -12,6 +12,8 @@ module Live
     # Must outlive one client heartbeat interval (10s) plus request latency,
     # so a beat already in flight when the user leaves can't resurrect them.
     LEFT_TOMBSTONE_TTL = 15
+    HAND_RAISE_COOLDOWN_SECONDS = 30
+    SPEAK_INVITATION_TTL = 300
     # How long a client cut off from the server (a deploy, a network blip,
     # sleep) can stay silent and still resume its call. Mesh media keeps
     # flowing peer-to-peer meanwhile; leave/kick/takeover revoke explicitly.
@@ -144,6 +146,7 @@ module Live
       def remove(room_id, user_id)
         redis.zrem(key(room_id), user_id)
         redis.hdel(metadata_key(room_id), user_id)
+        redis.del(speak_invitation_key(room_id, user_id))
         revoke_participant_session(room_id, user_id)
         touch_recently_active(room_id)
       end
@@ -338,6 +341,11 @@ module Live
       end
 
       def clear(room_id)
+        known_ids = redis.hkeys(metadata_key(room_id)).map(&:to_i).select(&:positive?)
+        known_ids.each do |user_id|
+          redis.del(speak_invitation_key(room_id, user_id))
+          redis.del(hand_raise_cooldown_key(room_id, user_id))
+        end
         redis.del(key(room_id))
         redis.del(metadata_key(room_id))
         redis.del(fingerprint_key(room_id))
@@ -363,6 +371,51 @@ module Live
 
         update_metadata(room_id, user_id, metadata)
         true
+      end
+
+      def set_hand_raise_cooldown(room_id, user_id, seconds: HAND_RAISE_COOLDOWN_SECONDS)
+        redis.setex(hand_raise_cooldown_key(room_id, user_id), seconds.to_i, "1")
+      end
+
+      def hand_raise_cooldown_remaining(room_id, user_id)
+        ttl = redis.ttl(hand_raise_cooldown_key(room_id, user_id)).to_i
+        ttl.positive? ? ttl : 0
+      end
+
+      def clear_hand_raise_cooldown(room_id, user_id)
+        redis.del(hand_raise_cooldown_key(room_id, user_id))
+      end
+
+      def set_speak_invitation(room_id, user_id, inviter:)
+        now = Time.now.to_f
+        metadata = get_metadata(room_id, user_id)
+        metadata[:speak_invited_at] = now
+        metadata[:speak_invited_by] = inviter.username
+        metadata[:speak_invited_by_id] = inviter.id
+        update_metadata(room_id, user_id, metadata)
+
+        payload = { inviter_id: inviter.id, inviter_username: inviter.username, invited_at: now }
+        redis.setex(speak_invitation_key(room_id, user_id), SPEAK_INVITATION_TTL, payload.to_json)
+        payload
+      end
+
+      def speak_invitation(room_id, user_id)
+        raw = redis.get(speak_invitation_key(room_id, user_id))
+        return nil if raw.nil?
+
+        JSON.parse(raw, symbolize_names: true)
+      end
+
+      def clear_speak_invitation(room_id, user_id)
+        had_key = redis.del(speak_invitation_key(room_id, user_id)).to_i > 0
+        metadata = get_metadata(room_id, user_id)
+        had_meta = [
+          metadata.delete(:speak_invited_at),
+          metadata.delete(:speak_invited_by),
+          metadata.delete(:speak_invited_by_id),
+        ].any?
+        update_metadata(room_id, user_id, metadata) if had_meta
+        had_key || had_meta
       end
 
       def update_metadata(room_id, user_id, metadata)
@@ -525,6 +578,14 @@ module Live
 
       def livekit_sid_key(room_id)
         "#{KEY_NAMESPACE}:#{room_id}:livekit_sids"
+      end
+
+      def hand_raise_cooldown_key(room_id, user_id)
+        "#{KEY_NAMESPACE}:#{room_id}:hand_cooldown:#{user_id}"
+      end
+
+      def speak_invitation_key(room_id, user_id)
+        "#{KEY_NAMESPACE}:#{room_id}:speak_invitation:#{user_id}"
       end
     end
   end
