@@ -4,10 +4,19 @@ class TextSentinel
   attr_accessor :text
 
   ENTROPY_SCALE = 0.7
+  MAX_WORD_LENGTH_REGEXPS = {}
+  MAX_WORD_LENGTH_MUTEX = Mutex.new
+  private_constant :MAX_WORD_LENGTH_REGEXPS, :MAX_WORD_LENGTH_MUTEX
 
   def initialize(text, opts = nil)
     @opts = opts || {}
-    @text = text.to_s.encode("UTF-8", invalid: :replace, undef: :replace, replace: "")
+    str = text.to_s
+    @text =
+      if str.encoding == Encoding::UTF_8 && str.valid_encoding?
+        str
+      else
+        str.encode(Encoding::UTF_8, invalid: :replace, undef: :replace, replace: "")
+      end
   end
 
   def self.body_sentinel(text, opts = {})
@@ -38,7 +47,57 @@ class TextSentinel
 
   # Number of unique bytes
   def entropy
-    @entropy ||= @text.strip.bytes.uniq.size
+    @entropy ||=
+      begin
+        stripped = @text.strip
+        # Five 52-bit masks cover all 256 byte values inside 63-bit signed Fixnums without Bignum promotion.
+        mask0 = 0
+        mask1 = 0
+        mask2 = 0
+        mask3 = 0
+        mask4 = 0
+        count = 0
+        i = 0
+        len = stripped.bytesize
+
+        while i < len
+          byte = stripped.getbyte(i)
+          if byte < 52
+            bit = 1 << byte
+            if (mask0 & bit) == 0
+              mask0 |= bit
+              count += 1
+            end
+          elsif byte < 104
+            bit = 1 << (byte - 52)
+            if (mask1 & bit) == 0
+              mask1 |= bit
+              count += 1
+            end
+          elsif byte < 156
+            bit = 1 << (byte - 104)
+            if (mask2 & bit) == 0
+              mask2 |= bit
+              count += 1
+            end
+          elsif byte < 208
+            bit = 1 << (byte - 156)
+            if (mask3 & bit) == 0
+              mask3 |= bit
+              count += 1
+            end
+          else
+            bit = 1 << (byte - 208)
+            if (mask4 & bit) == 0
+              mask4 |= bit
+              count += 1
+            end
+          end
+          i += 1
+        end
+
+        count
+      end
   end
 
   def valid?
@@ -59,7 +118,7 @@ class TextSentinel
   # Ensure maximum word length
   def seems_unpretentious?
     skipped_locales.include?(SiteSetting.default_locale) || @opts[:max_word_length].nil? ||
-      !@text.match?(/\p{Alnum}{#{@opts[:max_word_length] + 1},}/)
+      !@text.match?(max_word_length_regexp(@opts[:max_word_length] + 1))
   end
 
   # Ensure at least one lowercase letter
@@ -69,6 +128,13 @@ class TextSentinel
   end
 
   private
+
+  def max_word_length_regexp(min_run)
+    MAX_WORD_LENGTH_REGEXPS[min_run] ||
+      MAX_WORD_LENGTH_MUTEX.synchronize do
+        MAX_WORD_LENGTH_REGEXPS[min_run] ||= /\p{Alnum}{#{min_run},}/
+      end
+  end
 
   # Hard to tell "word length" for CJK languages
   def skipped_locales

@@ -40,6 +40,14 @@ RSpec.describe TextSentinel do
     it "handles repeated foreign characters" do
       expect(TextSentinel.new("又一个测试话题" * 3).entropy).to eq(17)
     end
+
+    it "counts all byte buckets and scrubs invalid UTF-8 sequences" do
+      all_non_ws = (33..126).map(&:chr).join + "éüñ🚀🎉漢字"
+      expect(TextSentinel.new(all_non_ws).entropy).to eq(all_non_ws.strip.bytes.uniq.size)
+
+      invalid = (+"hello\xFFworld").force_encoding(Encoding::ASCII_8BIT)
+      expect(TextSentinel.new(invalid).text).to eq("helloworld")
+    end
   end
 
   describe "body_sentinel" do
