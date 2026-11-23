@@ -8,6 +8,7 @@ module Base62
   BASE = KEYS.length
   CHUNK_SIZE = 9
   CHUNK_BASE = BASE**CHUNK_SIZE
+  POWERS = (0..CHUNK_SIZE).map { |exp| BASE**exp }.freeze
   DECODE_MAP =
     Array
       .new(128) do |byte|
@@ -20,7 +21,7 @@ module Base62
         end
       end
       .freeze
-  private_constant :CHUNK_SIZE, :CHUNK_BASE, :DECODE_MAP
+  private_constant :CHUNK_SIZE, :CHUNK_BASE, :POWERS, :DECODE_MAP
 
   # Encodes base10 (decimal) number to base62 string.
   def self.encode(num)
@@ -51,16 +52,36 @@ module Base62
   def self.decode(str)
     return fallback_decode(str) if !str.encoding.ascii_compatible?
 
+    len = str.bytesize
     num = 0
     i = 0
-    len = str.bytesize
-    while i < len
-      byte = str.getbyte(i)
-      val = byte < 128 ? DECODE_MAP[byte] : nil
-      return fallback_decode(str) if val.nil?
-      num = (num * BASE) + val
-      i += 1
+
+    while len - i >= CHUNK_SIZE
+      chunk = 0
+      stop = i + CHUNK_SIZE
+      while i < stop
+        byte = str.getbyte(i)
+        val = byte < 128 ? DECODE_MAP[byte] : nil
+        return fallback_decode(str) if val.nil?
+        chunk = (chunk * BASE) + val
+        i += 1
+      end
+      num = (num * CHUNK_BASE) + chunk
     end
+
+    if i < len
+      rem_len = len - i
+      chunk = 0
+      while i < len
+        byte = str.getbyte(i)
+        val = byte < 128 ? DECODE_MAP[byte] : nil
+        return fallback_decode(str) if val.nil?
+        chunk = (chunk * BASE) + val
+        i += 1
+      end
+      num = (num * POWERS[rem_len]) + chunk
+    end
+
     num
   end
 
