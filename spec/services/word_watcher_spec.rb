@@ -145,6 +145,43 @@ RSpec.describe WordWatcher do
       end
     end
 
+    context "when cache is enabled" do
+      before do
+        described_class.enable_cache
+        described_class.clear_cache!
+      end
+
+      after do
+        described_class.disable_cache
+        described_class.clear_cache!
+      end
+
+      it "caches compiled regexps in memory and invalidates when watched words or settings change" do
+        SiteSetting.watched_words_regular_expressions = false
+        first = described_class.compiled_regexps_for_action(:block)
+        Scheduler::Defer.do_all_work
+        second = described_class.compiled_regexps_for_action(:block)
+
+        expect(second).to equal(first)
+        expect(described_class.compiled_regexps_for_action(:censor)).to eq([])
+        Scheduler::Defer.do_all_work
+        expect(described_class.compiled_regexps_for_action(:censor)).to eq([])
+
+        SiteSetting.watched_words_regular_expressions = true
+        regexp_mode = described_class.compiled_regexps_for_action(:block)
+        expect(regexp_mode).not_to equal(first)
+
+        new_word =
+          Fabricate(:watched_word, word: "freshblockedword", action: WatchedWord.actions[:block])
+        updated = described_class.compiled_regexps_for_action(:block)
+        expect(updated.any? { |r| r.match?("freshblockedword") }).to eq(true)
+
+        new_word.destroy!
+        after_destroy = described_class.compiled_regexps_for_action(:block)
+        expect(after_destroy.any? { |r| r.match?("freshblockedword") }).to eq(false)
+      end
+    end
+
     context "when regular expression is invalid" do
       before do
         SiteSetting.watched_words_regular_expressions = true
