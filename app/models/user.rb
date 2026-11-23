@@ -612,17 +612,24 @@ class User < ActiveRecord::Base
 
     # Sometimes the system user doesn't have their auto groups
     # from some strange edge case, this handles it.
-    if is_system_user? &&
-         (
-           (
-             Group.auto_groups_between(:admins, :trust_level_4) -
-               [Group::AUTO_GROUPS[:anonymous_users]]
-           ) & group_ids
-         ).any?
-      return true
+    if is_system_user?
+      system_groups =
+        Group.auto_groups_between(:admins, :trust_level_4) - [Group::AUTO_GROUPS[:anonymous_users]]
+      if if group_ids.is_a?(Array)
+           system_groups.intersect?(group_ids)
+         else
+           (system_groups & group_ids).any?
+         end
+        return true
+      end
     end
 
-    (group_ids & belonging_to_group_ids).any?
+    user_group_ids = belonging_to_group_ids
+    if group_ids.is_a?(Array) && user_group_ids.is_a?(Array)
+      group_ids.intersect?(user_group_ids)
+    else
+      (group_ids & user_group_ids).any?
+    end
   end
 
   def belonging_to_group_ids
