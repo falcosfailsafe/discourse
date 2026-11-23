@@ -327,4 +327,13 @@ RSpec.describe "translate accelerator" do
       end
     end
   end
+
+  it "avoids per-call Hash and String key allocations on cached lookups" do
+    I18n.locale = :en
+    I18n.t("foo")
+
+    expect(I18n.t("foo")).to eq("Foo in :en")
+    expect(I18n.t(:foo)).to eq("Foo in :en")
+    expect(I18n.fallbacks[:en]).to be_frozen
+  end
 end
