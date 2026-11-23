@@ -890,6 +890,14 @@ RSpec.describe Upload do
       ids = Upload.extract_upload_ids("This URL /#{base62} is an upload")
       expect(ids).to contain_exactly(upload.id)
     end
+
+    it "skips database queries when raw has no slashes or valid candidate hashes" do
+      queries =
+        track_sql_queries do
+          expect(Upload.extract_upload_ids("Plain post without slashes")).to eq([])
+        end
+      expect(queries).to be_empty
+    end
   end
 
   describe ".sha1_from_base62_encoded" do

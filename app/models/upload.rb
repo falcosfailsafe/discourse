@@ -640,18 +640,27 @@ class Upload < ActiveRecord::Base
     problems
   end
 
+  HEX_SHA1_PATH_REGEXP = %r{/(\h{40})}
+  BASE62_PATH_REGEXP = %r{/([a-zA-Z0-9]{1,#{MAX_BASE62_SHA1_LENGTH}})(?![a-zA-Z0-9])}
+  private_constant :HEX_SHA1_PATH_REGEXP, :BASE62_PATH_REGEXP
+
   def self.extract_upload_ids(raw)
-    return [] if raw.blank?
+    return [] if raw.blank? || !raw.include?("/")
 
-    sha1s = []
+    sha1s = nil
 
-    raw.scan(/\/(\h{40})/).each { |match| sha1s << match[0] }
+    raw.scan(HEX_SHA1_PATH_REGEXP) { (sha1s ||= []) << Regexp.last_match(1) }
 
-    raw
-      .scan(%r{/([a-zA-Z0-9]+)})
-      .each { |match| sha1s << Upload.sha1_from_base62_encoded(match[0]) }
+    raw.scan(BASE62_PATH_REGEXP) do
+      if (decoded = Upload.sha1_from_base62_encoded(Regexp.last_match(1)))
+        (sha1s ||= []) << decoded
+      end
+    end
 
-    Upload.where(sha1: sha1s.uniq).pluck(:id)
+    return [] if !sha1s
+
+    sha1s.uniq!
+    Upload.where(sha1: sha1s).pluck(:id)
   end
 
   def self.backfill_dominant_colors!(count)
