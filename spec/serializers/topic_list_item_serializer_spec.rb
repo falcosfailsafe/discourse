@@ -224,6 +224,15 @@ RSpec.describe TopicListItemSerializer do
       json = TopicListItemSerializer.new(topic, scope: Guardian.new(moderator), root: false).as_json
       expect(json[:op_like_count]).to eq(first_post.like_count)
     end
+
+    it "reuses theme_modifier_helper across TopicListItemSerializer instances sharing a Guardian" do
+      guardian = Guardian.new(moderator)
+      other_topic = Fabricate(:topic)
+      s1 = TopicListItemSerializer.new(topic, scope: guardian, root: false)
+      s2 = TopicListItemSerializer.new(other_topic, scope: guardian, root: false)
+
+      expect(s1.send(:theme_modifier_helper)).to equal(s2.send(:theme_modifier_helper))
+    end
   end
 
   describe "tag localization" do

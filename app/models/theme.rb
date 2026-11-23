@@ -539,9 +539,15 @@ class Theme < ActiveRecord::Base
   end
 
   def self.lookup_modifier(theme_ids, modifier_name)
-    theme_ids = [theme_ids] unless theme_ids.is_a?(Array)
+    ids_key =
+      if theme_ids.is_a?(Array)
+        theme_ids.length == 1 ? theme_ids[0] : theme_ids.join(",")
+      else
+        theme_ids
+      end
 
-    get_set_cache("#{theme_ids.join(",")}:modifier:#{modifier_name}:#{Theme.compiler_version}") do
+    get_set_cache("#{ids_key}:modifier:#{modifier_name}:#{Theme.compiler_version}") do
+      theme_ids = [theme_ids] unless theme_ids.is_a?(Array)
       ThemeModifierSet.resolve_modifier_for_themes(theme_ids, modifier_name)
     end
   end

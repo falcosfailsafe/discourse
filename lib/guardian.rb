@@ -133,6 +133,20 @@ class Guardian
     !authenticated?
   end
 
+  def theme_modifier_helper
+    @theme_modifier_helper ||= ThemeModifierHelper.new(request: @request)
+  end
+
+  def serialize_topic_op_likes_data_enabled?
+    if defined?(@serialize_topic_op_likes_data_enabled)
+      return @serialize_topic_op_likes_data_enabled
+    end
+
+    @serialize_topic_op_likes_data_enabled =
+      theme_modifier_helper.serialize_topic_op_likes_data ||
+        DiscoursePluginRegistry.apply_modifier(:serialize_topic_op_likes_data, false)
+  end
+
   def authenticated?
     @user.present?
   end
