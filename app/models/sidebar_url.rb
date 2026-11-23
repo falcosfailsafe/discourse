@@ -58,6 +58,8 @@ class SidebarUrl < ActiveRecord::Base
     { name: "Filter", path: "/filter", icon: "filter", segment: SidebarUrl.segments["secondary"] },
   ]
   COMMUNITY_SECTION_LINK_PATHS = COMMUNITY_SECTION_LINKS.map { |link| link[:path] }.freeze
+  COMMUNITY_SECTION_LINK_PATHS_SET = COMMUNITY_SECTION_LINK_PATHS.to_set.freeze
+  private_constant :COMMUNITY_SECTION_LINK_PATHS_SET
 
   validates :icon, presence: true, length: { maximum: MAX_ICON_LENGTH }
   validates :name, presence: true, length: { maximum: MAX_NAME_LENGTH }
@@ -94,9 +96,17 @@ class SidebarUrl < ActiveRecord::Base
   end
 
   def self.built_in_community_section_link_value?(value)
-    normalized_value =
-      value.to_s.sub(%r{\Ahttps?://#{Regexp.escape(Discourse.current_hostname)}}, "")
-    COMMUNITY_SECTION_LINK_PATHS.include?(normalized_value)
+    normalized_value = value.to_s
+    if normalized_value.start_with?("http://", "https://")
+      scheme_end = normalized_value.start_with?("https://") ? 8 : 7
+      hostname = Discourse.current_hostname
+      if normalized_value.byteslice(scheme_end, hostname.bytesize) == hostname
+        normalized_value = normalized_value.byteslice((scheme_end + hostname.bytesize)..) || ""
+      else
+        return false
+      end
+    end
+    COMMUNITY_SECTION_LINK_PATHS_SET.include?(normalized_value)
   end
 
   def built_in_community_section_link?

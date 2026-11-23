@@ -58,4 +58,29 @@ RSpec.describe SidebarUrl do
       ).external,
     ).to be true
   end
+
+  describe ".built_in_community_section_link_value?" do
+    it "matches built-in relative and current-host absolute URLs while rejecting external hosts" do
+      expect(SidebarUrl.built_in_community_section_link_value?("/latest")).to eq(true)
+      expect(
+        SidebarUrl.built_in_community_section_link_value?(
+          "https://#{Discourse.current_hostname}/latest",
+        ),
+      ).to eq(true)
+      expect(
+        SidebarUrl.built_in_community_section_link_value?(
+          "http://#{Discourse.current_hostname}/my/messages",
+        ),
+      ).to eq(true)
+      expect(
+        SidebarUrl.built_in_community_section_link_value?(
+          "https://#{Discourse.current_hostname}.evil.example/latest",
+        ),
+      ).to eq(false)
+      expect(SidebarUrl.built_in_community_section_link_value?("https://example.com/latest")).to eq(
+        false,
+      )
+      expect(SidebarUrl.built_in_community_section_link_value?("/custom-page")).to eq(false)
+    end
+  end
 end
