@@ -20,5 +20,11 @@ RSpec.describe TopicParticipantsSummary do
       topic.allowed_user_ids = [user1.id, user2.id, user3.id, user4.id, user5.id, user6.id]
       expect(summary.map(&:user)).to eq([user1, user2, user3, user4, user5])
     end
+
+    it "includes the topic creator first when the viewer is another participant" do
+      topic.allowed_user_ids = [topic_creator.id, user1.id, user2.id]
+      viewer_summary = described_class.new(topic, user: user1).summary
+      expect(viewer_summary.map(&:user)).to eq([topic_creator, user2])
+    end
   end
 end

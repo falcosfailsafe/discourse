@@ -24,7 +24,20 @@ class TopicFeaturedUsers
   end
 
   def user_ids
-    slot_user_ids.uniq.compact
+    ids = []
+    if (u1 = topic.featured_user1_id)
+      ids << u1
+    end
+    if (u2 = topic.featured_user2_id) && !ids.include?(u2)
+      ids << u2
+    end
+    if (u3 = topic.featured_user3_id) && !ids.include?(u3)
+      ids << u3
+    end
+    if (u4 = topic.featured_user4_id) && !ids.include?(u4)
+      ids << u4
+    end
+    ids
   end
 
   def recent_user_ids

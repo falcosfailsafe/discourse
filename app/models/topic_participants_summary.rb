@@ -12,7 +12,7 @@ class TopicParticipantsSummary
   end
 
   def summary
-    top_participants.compact.map(&method(:new_topic_poster_for))
+    top_participants.compact.map { |user| new_topic_poster_for(user) }
   end
 
   def new_topic_poster_for(user)
@@ -32,7 +32,12 @@ class TopicParticipantsSummary
 
   def user_ids
     return [] unless @user
-    [topic.user_id] + topic.allowed_user_ids - [@user.id]
+    allowed_ids = topic.allowed_user_ids
+    excluded_id = @user.id
+    ids = []
+    ids << topic.user_id if topic.user_id && topic.user_id != excluded_id
+    allowed_ids.each { |id| ids << id if id && id != excluded_id }
+    ids
   end
 
   def user_lookup
