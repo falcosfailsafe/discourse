@@ -1,6 +1,31 @@
 # frozen_string_literal: true
 
 class HtmlToMarkdown
+  SPACE_RUN_REGEXP = /[[:space:]]+/
+  private_constant :SPACE_RUN_REGEXP
+
+  def self.method_added(method_name)
+    @allowed_visitor_tags = nil if method_name.start_with?("visit_")
+    super
+  end
+
+  def self.allowed_visitor_tags
+    @allowed_visitor_tags ||=
+      begin
+        tags = Set.new
+        ancestors
+          .take_while { |klass| klass <= HtmlToMarkdown }
+          .each do |klass|
+            (
+              klass.instance_methods(false) + klass.private_instance_methods(false)
+            ).each do |method_name|
+              tags << method_name.name.delete_prefix("visit_") if method_name.start_with?("visit_")
+            end
+          end
+        tags.freeze
+      end
+  end
+
   def initialize(html, opts = {})
     @opts = opts
     @within_html_block = false
@@ -26,13 +51,9 @@ class HtmlToMarkdown
   end
 
   def remove_not_allowed!(doc)
-    allowed = Set.new(@opts[:additional_allowed_tags] || [])
-
-    HtmlToMarkdown.private_instance_methods.each do |m|
-      if tag = m.to_s[/^visit_(.+)/, 1]
-        allowed << tag
-      end
-    end
+    base_allowed = self.class.allowed_visitor_tags
+    additional = @opts[:additional_allowed_tags]
+    allowed = additional.present? ? (base_allowed | additional) : base_allowed
 
     @doc.traverse { |node| node.remove if !allowed.include?(node.name) }
   end
@@ -119,21 +140,17 @@ class HtmlToMarkdown
   def collapse_spaces!(nodes, was_space = true)
     nodes.each do |node|
       if node.text?
-        text = String.new
+        raw = node.text
+        next if raw.empty?
 
-        node.text.chars.each do |c|
-          if c[/[[:space:]]/]
-            text << " " if !was_space
-            was_space = true
-          else
-            text << c
-            was_space = false
-          end
-        end
-
-        node.content = text
+        collapsed = raw.gsub(SPACE_RUN_REGEXP, " ")
+        ends_with_space = collapsed.end_with?(" ")
+        collapsed = collapsed.byteslice(1, collapsed.bytesize - 1) if was_space &&
+          collapsed.start_with?(" ")
+        node.content = collapsed if collapsed != raw
+        was_space = ends_with_space
       else
-        node.children.each { |n| was_space = collapse_spaces!([n], was_space) }
+        was_space = collapse_spaces!(node.children, was_space)
       end
     end
 
@@ -249,7 +266,7 @@ class HtmlToMarkdown
     code = node.at("code")
     code_class = code ? code["class"] : ""
     lang = code_class ? code_class[/lang-(\w+)/, 1] : ""
-    "\n\n#{fence}#{lang}\n#{traverse(node)}\n#{fence}\n\n"
+    "\n\n#{fence}#{lang}\n#{text}\n#{fence}\n\n"
   end
 
   def visit_br(node)
@@ -411,7 +428,7 @@ class HtmlToMarkdown
     main
     nav
     section
-  ]
+  ].to_set.freeze
   def block?(node)
     return false if !node
     node.description&.block? || HTML5_BLOCK_ELEMENTS.include?(node.name)

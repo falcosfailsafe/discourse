@@ -100,6 +100,20 @@ RSpec.describe HtmlToMarkdown do
           doc.css("custom-image").each { |img| img.replace("Image #{img["image-id"]}") }
         end
     expect(md).to eq("Image 42\nText within allowed tag")
+
+    subclass = Class.new(HtmlToMarkdown)
+    expect(subclass.new("<widget>hi</widget><p>ok</p>").to_markdown).to eq("ok")
+
+    subclass.class_eval do
+      private
+
+      def visit_widget(node)
+        "[[#{traverse(node)}]]"
+      end
+    end
+    expect(
+      subclass.new("<widget>hi</widget><p>  ok \u00A0 <span>  there </span> </p>").to_markdown,
+    ).to eq("[[hi]]\n\nok there")
   end
 
   it "doesn't error on non-inline elements like (aside, section)" do
