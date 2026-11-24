@@ -12,8 +12,7 @@ module Onebox
     end
 
     def ordered_engines
-      @ordered_engines ||=
-        Engine.engines.sort_by { |e| e.respond_to?(:priority) ? e.priority : 100 }
+      @ordered_engines ||= Engine.ordered_engines
     end
 
     def oneboxed

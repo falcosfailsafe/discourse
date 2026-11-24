@@ -271,12 +271,27 @@ module Oneboxer
     Discourse.redis.del(preview_key(user_id))
   end
 
+  ALLOWED_IFRAME_REGEXES_CACHE = LruRedux::ThreadSafeCache.new(16)
+  private_constant :ALLOWED_IFRAME_REGEXES_CACHE
+
   def self.engine(url)
-    Onebox::Matcher.new(
-      url,
-      { allowed_iframe_regexes: Onebox::Engine.origins_to_regexes(allowed_iframe_origins) },
-    ).oneboxed
+    Onebox::Matcher.new(url, { allowed_iframe_regexes: allowed_iframe_regexes }).oneboxed
   end
+
+  def self.allowed_iframe_regexes
+    onebox_iframes = SiteSetting.allowed_onebox_iframes
+    iframes = SiteSetting.allowed_iframes
+    cache_key = [
+      onebox_iframes.frozen? ? onebox_iframes : onebox_iframes.dup.freeze,
+      iframes.frozen? ? iframes : iframes.dup.freeze,
+      Onebox::Engine.all_iframe_origins,
+    ].freeze
+
+    ALLOWED_IFRAME_REGEXES_CACHE.getset(cache_key) do
+      Onebox::Engine.origins_to_regexes(allowed_iframe_origins)
+    end
+  end
+  private_class_method :allowed_iframe_regexes
 
   def self.recently_failed?(url)
     Discourse.cache.read(onebox_failed_cache_key(url)).present?

@@ -140,4 +140,34 @@ RSpec.describe Onebox::Engine do
       expect(onebox_name).not_to include("onebox", "Onebox")
     end
   end
+
+  describe "engine and iframe origin caching" do
+    it "caches engines, ordered_engines, all_iframe_origins, and origins_to_regexes and invalidates when constants change" do
+      first_engines = Onebox::Engine.engines
+      expect(Onebox::Engine.engines).to equal(first_engines)
+
+      first_ordered = Onebox::Engine.ordered_engines
+      expect(Onebox::Engine.ordered_engines).to equal(first_ordered)
+
+      first_origins = Onebox::Engine.all_iframe_origins
+      expect(Onebox::Engine.all_iframe_origins).to equal(first_origins)
+
+      first_regexes = Onebox::Engine.origins_to_regexes(%w[https://example.com])
+      expect(Onebox::Engine.origins_to_regexes(%w[https://example.com])).to equal(first_regexes)
+
+      dynamic_engine =
+        Class.new do
+          include Onebox::Engine
+          requires_iframe_origins "https://dynamic-test-origin.example"
+        end
+      Onebox::Engine.const_set(:DynamicCacheTestOnebox, dynamic_engine)
+
+      expect(Onebox::Engine.engines).to include(dynamic_engine)
+      expect(Onebox::Engine.all_iframe_origins).to include("https://dynamic-test-origin.example")
+    ensure
+      if Onebox::Engine.const_defined?(:DynamicCacheTestOnebox)
+        Onebox::Engine.send(:remove_const, :DynamicCacheTestOnebox)
+      end
+    end
+  end
 end

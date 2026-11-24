@@ -13,35 +13,83 @@ module Onebox
       end
     end
 
+    WILDCARD_IFRAME_REGEXES = [/.*/].freeze
+    ORIGINS_TO_REGEXES_CACHE = LruRedux::ThreadSafeCache.new(32)
+    private_constant :WILDCARD_IFRAME_REGEXES, :ORIGINS_TO_REGEXES_CACHE
+
+    def self.clear_cache!
+      @engines_cache = nil
+      @ordered_engines_cache = nil
+      @iframe_origins_cache = nil
+    end
+
     def self.engines
-      constants.select { |constant| constant.to_s =~ /Onebox\z/ }.sort.map(&method(:const_get))
+      current_constants = constants
+      cached_constants, cached_engines = @engines_cache
+      return cached_engines if cached_engines && cached_constants == current_constants
+
+      computed =
+        current_constants
+          .select { |constant| constant.end_with?("Onebox") }
+          .sort
+          .map { |constant| const_get(constant) }
+          .freeze
+      @engines_cache = [current_constants.freeze, computed].freeze
+      computed
+    end
+
+    def self.ordered_engines
+      current_engines = engines
+      cached_source, cached_ordered = @ordered_engines_cache
+      return cached_ordered if cached_ordered && cached_source.equal?(current_engines)
+
+      computed = current_engines.sort_by { |e| e.respond_to?(:priority) ? e.priority : 100 }.freeze
+      @ordered_engines_cache = [current_engines, computed].freeze
+      computed
     end
 
     def self.all_iframe_origins
-      engines.flat_map { |e| e.iframe_origins }.uniq.compact
+      current_engines = engines
+      cached_source, cached_origins = @iframe_origins_cache
+      return cached_origins if cached_origins && cached_source.equal?(current_engines)
+
+      computed = current_engines.flat_map(&:iframe_origins).uniq.compact.freeze
+      @iframe_origins_cache = [current_engines, computed].freeze
+      computed
     end
 
     def self.origins_to_regexes(origins)
-      return [/.*/] if origins.include?("*")
+      return WILDCARD_IFRAME_REGEXES if origins.include?("*")
 
-      origins.map do |origin|
-        escaped_origin = Regexp.escape(origin)
-        if origin.start_with?("*.", "https://*.", "http://*.")
-          escaped_origin = escaped_origin.sub("\\*") { "[^/?#\\\\]*" }
+      key =
+        if origins.frozen? && origins.all?(&:frozen?)
+          origins
+        else
+          origins.map { |origin| origin.frozen? ? origin : origin.dup.freeze }.freeze
         end
 
-        origin_boundary =
-          if origin.match?(%r{\Ahttps?://[^/?#]+\z}i)
-            if origin.match?(/:\d+\z/)
-              "(?:[/?#]|\\z)"
-            else
-              "(?::\\d+(?:[/?#]|\\z)|[/?#]|\\z)"
+      ORIGINS_TO_REGEXES_CACHE.getset(key) do
+        key
+          .map do |origin|
+            escaped_origin = Regexp.escape(origin)
+            if origin.start_with?("*.", "https://*.", "http://*.")
+              escaped_origin = escaped_origin.sub("\\*") { "[^/?#\\\\]*" }
             end
-          else
-            ""
-          end
 
-        Regexp.new("\\A#{escaped_origin}#{origin_boundary}", "i")
+            origin_boundary =
+              if origin.match?(%r{\Ahttps?://[^/?#]+\z}i)
+                if origin.match?(/:\d+\z/)
+                  "(?:[/?#]|\\z)"
+                else
+                  "(?::\\d+(?:[/?#]|\\z)|[/?#]|\\z)"
+                end
+              else
+                ""
+              end
+
+            Regexp.new("\\A#{escaped_origin}#{origin_boundary}", "i")
+          end
+          .freeze
       end
     end
 
@@ -168,6 +216,7 @@ module Onebox
 
       def requires_iframe_origins(*origins)
         class_variable_set :@@iframe_origins, origins
+        Onebox::Engine.clear_cache!
       end
 
       def iframe_origins

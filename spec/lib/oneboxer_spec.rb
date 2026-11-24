@@ -1123,6 +1123,14 @@ RSpec.describe Oneboxer do
     expect(Oneboxer.onebox("https://allowlist.ed/iframes", invalidate_oneboxes: true)).to match(
       "iframe src",
     )
+
+    expect(Oneboxer.engine("https://www.youtube.com/watch?v=dQw4w9WgXcQ")).to eq(
+      Onebox::Engine::YoutubeOnebox,
+    )
+    SiteSetting.allowed_onebox_iframes = ""
+    expect(Oneboxer.engine("https://www.youtube.com/watch?v=dQw4w9WgXcQ")).to eq(
+      Onebox::Engine::AllowlistedGenericOnebox,
+    )
   end
 
   it "blocks oEmbed iframes whose source only prefix-matches an allowed onebox origin" do
