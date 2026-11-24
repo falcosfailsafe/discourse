@@ -175,16 +175,25 @@ module Email
       end
     end
 
+    IGNORE_BY_TITLE_REGEXPS = LruRedux::ThreadSafeCache.new(16)
+    IGNORE_BY_TITLE_RAW_REGEXPS = LruRedux::ThreadSafeCache.new(16)
+    private_constant :IGNORE_BY_TITLE_REGEXPS, :IGNORE_BY_TITLE_RAW_REGEXPS
+
     def is_blocked?
-      if SiteSetting.ignore_by_title.present?
-        escaped_regex =
-          SiteSetting.ignore_by_title.split("|").map { |s| Regexp.escape(s) }.join("|")
-        return true if Regexp.new(escaped_regex, Regexp::IGNORECASE) =~ @mail.subject
+      if (ignore_by_title = SiteSetting.ignore_by_title).present?
+        key = ignore_by_title.frozen? ? ignore_by_title : ignore_by_title.dup.freeze
+        regexp =
+          IGNORE_BY_TITLE_REGEXPS.getset(key) do
+            escaped_regex = key.split("|").map { |s| Regexp.escape(s) }.join("|")
+            Regexp.new(escaped_regex, Regexp::IGNORECASE)
+          end
+        return true if regexp.match?(@mail.subject)
       end
-      if SiteSetting.ignore_by_title_regex.present?
-        if Regexp.new(SiteSetting.ignore_by_title_regex, Regexp::IGNORECASE) =~ @mail.subject
-          return true
-        end
+      if (ignore_by_title_regex = SiteSetting.ignore_by_title_regex).present?
+        key =
+          ignore_by_title_regex.frozen? ? ignore_by_title_regex : ignore_by_title_regex.dup.freeze
+        regexp = IGNORE_BY_TITLE_RAW_REGEXPS.getset(key) { Regexp.new(key, Regexp::IGNORECASE) }
+        return true if regexp.match?(@mail.subject)
       end
       false
     end

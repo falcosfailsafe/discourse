@@ -1,6 +1,9 @@
 # frozen_string_literal: true
 
 class EmailValidator < ActiveModel::EachValidator
+  DOMAIN_RESTRICTION_REGEXPS = LruRedux::ThreadSafeCache.new(32)
+  private_constant :DOMAIN_RESTRICTION_REGEXPS
+
   def validate_each(record, attribute, value)
     if value.blank?
       record.errors.add(attribute, I18n.t(:"user.email.blank"))
@@ -43,10 +46,17 @@ class EmailValidator < ActiveModel::EachValidator
   end
 
   def self.email_in_restriction_setting?(setting, value)
-    domains = setting.gsub(".", '\.')
-    regexp = Regexp.new("@(.+\\.)?(#{domains})$", true)
-    value =~ regexp
+    value =~ domain_restriction_regexp(setting)
   end
+
+  def self.domain_restriction_regexp(setting)
+    key = setting.frozen? ? setting : setting.dup.freeze
+    DOMAIN_RESTRICTION_REGEXPS.getset(key) do
+      domains = key.gsub(".", '\.')
+      Regexp.new("@(.+\\.)?(#{domains})$", true)
+    end
+  end
+  private_class_method :domain_restriction_regexp
 
   def self.is_developer?(value)
     Developer.configured_email?(value)

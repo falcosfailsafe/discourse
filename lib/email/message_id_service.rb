@@ -31,6 +31,9 @@ module Email
   # See https://tools.ietf.org/html/rfc850#section-2.1.7 for the
   # Message-ID format specification.
   class MessageIdService
+    DISCOURSE_MESSAGE_ID_REGEXPS = LruRedux::ThreadSafeCache.new(32)
+    private_constant :DISCOURSE_MESSAGE_ID_REGEXPS
+
     class << self
       def generate_default
         "<#{SecureRandom.uuid}@#{host}>"
@@ -70,12 +73,9 @@ module Email
       # headers from an incoming email.
       def find_post_from_message_ids(message_ids)
         message_ids = message_ids.map { |message_id| message_id_clean(message_id) }
+        regexp = message_id_discourse_regexp
 
-        post_ids =
-          message_ids
-            .map { |message_id| message_id[message_id_discourse_regexp, 1] }
-            .compact
-            .map(&:to_i)
+        post_ids = message_ids.filter_map { |message_id| message_id[regexp, 1]&.to_i }
 
         post_ids << Post.where(outbound_message_id: message_ids).pluck(:id)
         post_ids << EmailLog.where(message_id: message_ids).pluck(:post_id)
@@ -95,7 +95,11 @@ module Email
       end
 
       def message_id_discourse_regexp
-        Regexp.new "discourse/post/(\\d+)@#{Regexp.escape(host)}"
+        current_host = host
+        key = current_host.frozen? ? current_host : current_host.dup.freeze
+        DISCOURSE_MESSAGE_ID_REGEXPS.getset(key) do
+          Regexp.new("discourse/post/(\\d+)@#{Regexp.escape(key)}")
+        end
       end
 
       def message_id_rfc_format(message_id)
@@ -104,7 +108,7 @@ module Email
 
       def message_id_clean(message_id)
         if message_id.present? && is_message_id_rfc?(message_id)
-          message_id.gsub(/\A<|>\z/, "")
+          message_id[1...-1]
         else
           message_id
         end

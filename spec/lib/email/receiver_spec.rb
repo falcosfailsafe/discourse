@@ -2018,6 +2018,9 @@ RSpec.describe Email::Receiver do
     it "ignores by case-insensitive title (regex)" do
       SiteSetting.ignore_by_title_regex = "t[ah]is.is"
       expect { process(:ignored) }.to_not change(Topic, :count)
+
+      SiteSetting.ignore_by_title_regex = "nomatch_pattern"
+      expect { process(:ignored) }.to raise_error(Email::Receiver::StrangersNotAllowedError)
     end
 
     it "associates email from a secondary address with user" do

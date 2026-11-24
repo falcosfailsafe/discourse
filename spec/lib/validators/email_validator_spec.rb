@@ -36,6 +36,10 @@ RSpec.describe EmailValidator do
       expect(blocks?("sam@e-mail.com")).to eq(true)
       expect(blocks?("sam@googlemail.com")).to eq(false)
       expect(blocks?("sam@email.computers.are.evil.com")).to eq(true)
+
+      SiteSetting.allowed_email_domains = "e-mail.com"
+      expect(blocks?("sam@e-mail.com")).to eq(false)
+      expect(blocks?("sam@email.com")).to eq(true)
     end
   end
 

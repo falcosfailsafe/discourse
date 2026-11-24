@@ -134,8 +134,18 @@ RSpec.describe Email::MessageIdService do
   describe "#host" do
     it "handles hostname changes at runtime" do
       expect(Email::MessageIdService.host).to eq("test.localhost")
+      first_regexp = Email::MessageIdService.message_id_discourse_regexp
+      expect(Email::MessageIdService.message_id_discourse_regexp).to equal(first_regexp)
+
       SiteSetting.force_hostname = "other.domain.example.com"
       expect(Email::MessageIdService.host).to eq("other.domain.example.com")
+      updated_regexp = Email::MessageIdService.message_id_discourse_regexp
+      expect(updated_regexp).not_to equal(first_regexp)
+      expect(
+        Email::MessageIdService.discourse_generated_message_id?(
+          "<discourse/post/42@other.domain.example.com>",
+        ),
+      ).to eq(true)
     end
   end
 end
