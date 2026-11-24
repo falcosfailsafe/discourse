@@ -145,6 +145,28 @@ RSpec.describe Search do
       result = Search::GroupedSearchResults.blurb_for(cooked: cooked)
       expect(result).to eq("invalid URL: http:error] should not trip up blurb generation.")
     end
+
+    it "extracts phrase match excerpts and escapes highlighted headlines" do
+      cooked = "<p>prefix words before exact phrase match target and trailing context</p>"
+      expect(
+        Search::GroupedSearchResults.blurb_for(
+          cooked: cooked,
+          term: '"exact phrase"',
+          blurb_length: 30,
+        ),
+      ).to include("exact phrase")
+
+      results =
+        Search::GroupedSearchResults.new(
+          type_filter: nil,
+          term: "awesome",
+          search_context: nil,
+          is_header_search: true,
+        )
+      (Search.per_facet + 1).times { results.add(Post.new) }
+      expect(results.posts.length).to eq(Search.per_facet)
+      expect(results.more_posts).to eq(true)
+    end
   end
 
   describe "#execute" do

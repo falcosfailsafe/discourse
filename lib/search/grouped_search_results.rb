@@ -80,8 +80,30 @@ class Search
     ESCAPED_HIGHLIGHT_TAGS = {
       ERB::Util.html_escape(HIGHLIGHT_START_TAG) => HIGHLIGHT_START_TAG,
       ERB::Util.html_escape(HIGHLIGHT_END_TAG) => HIGHLIGHT_END_TAG,
-    }
-    private_constant :HIGHLIGHT_START_TAG, :HIGHLIGHT_END_TAG, :ESCAPED_HIGHLIGHT_TAGS
+    }.freeze
+    ESCAPED_HIGHLIGHT_REGEXP = Regexp.union(ESCAPED_HIGHLIGHT_TAGS.keys)
+    RESULT_TYPES_BY_CLASS_NAME = {
+      "Post" => "posts",
+      "Topic" => "topics",
+      "Category" => "categories",
+      "User" => "users",
+      "Tag" => "tags",
+      "Group" => "groups",
+    }.freeze
+    MORE_IVARS_BY_TYPE = {
+      "posts" => :@more_posts,
+      "topics" => :@more_topics,
+      "categories" => :@more_categories,
+      "users" => :@more_users,
+      "tags" => :@more_tags,
+      "groups" => :@more_groups,
+    }.freeze
+    private_constant :HIGHLIGHT_START_TAG,
+                     :HIGHLIGHT_END_TAG,
+                     :ESCAPED_HIGHLIGHT_TAGS,
+                     :ESCAPED_HIGHLIGHT_REGEXP,
+                     :RESULT_TYPES_BY_CLASS_NAME,
+                     :MORE_IVARS_BY_TYPE
 
     def blurb(post, scope: nil)
       opts = { term: @blurb_term, blurb_length: @blurb_length }
@@ -115,13 +137,14 @@ class Search
     end
 
     def add(object)
-      type = object.class.to_s.downcase.pluralize
-      if !@is_header_search && public_send(type).length == Search.per_filter
+      type = RESULT_TYPES_BY_CLASS_NAME[object.class.name] || object.class.to_s.downcase.pluralize
+      collection = public_send(type)
+      if !@is_header_search && collection.length == Search.per_filter
         @more_full_page_results = true
-      elsif @is_header_search && public_send(type).length == Search.per_facet
-        instance_variable_set(:"@more_#{type}", true)
+      elsif @is_header_search && collection.length == Search.per_facet
+        instance_variable_set(MORE_IVARS_BY_TYPE[type] || :"@more_#{type}", true)
       else
-        public_send(type) << object
+        collection << object
       end
 
       if can_lazy_load_categories
@@ -160,7 +183,7 @@ class Search
       end
 
       if term
-        term = Regexp.last_match[1] if term =~ Regexp.new(Search::PHRASE_MATCH_REGEXP_PATTERN)
+        term = Regexp.last_match[1] if term.include?('"') && term =~ Search::PHRASE_MATCH_REGEXP
 
         blurb = TextHelper.excerpt(cooked, term, radius: blurb_length / 2)
       end
@@ -172,10 +195,7 @@ class Search
     private
 
     def escape_headline(headline)
-      ERB::Util.html_escape(headline).gsub(
-        Regexp.union(ESCAPED_HIGHLIGHT_TAGS.keys),
-        ESCAPED_HIGHLIGHT_TAGS,
-      )
+      ERB::Util.html_escape(headline).gsub(ESCAPED_HIGHLIGHT_REGEXP, ESCAPED_HIGHLIGHT_TAGS)
     end
   end
 end

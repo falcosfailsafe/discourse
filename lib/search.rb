@@ -1255,6 +1255,7 @@ class Search
   end
 
   PHRASE_MATCH_REGEXP_PATTERN = '"([^"]+)"'
+  PHRASE_MATCH_REGEXP = Regexp.new(PHRASE_MATCH_REGEXP_PATTERN)
 
   def posts_query(limit, type_filter: nil, aggregate_search: false)
     posts =
@@ -1312,11 +1313,16 @@ class Search
         posts = posts.where(post_number: 1) if @in_title
         weight_filter = weights == "ABCD" ? nil : weights
         posts = posts.where("post_search_data.search_data @@ #{ts_query(weight_filter:)}")
-        exact_terms = @term.scan(Regexp.new(PHRASE_MATCH_REGEXP_PATTERN)).flatten
-
-        exact_terms.each do |exact|
-          posts =
-            posts.where("posts.raw ILIKE :exact OR topics.title ILIKE :exact", exact: "%#{exact}%")
+        if @term.include?('"')
+          @term
+            .scan(PHRASE_MATCH_REGEXP)
+            .each do |(exact)|
+              posts =
+                posts.where(
+                  "posts.raw ILIKE :exact OR topics.title ILIKE :exact",
+                  exact: "%#{exact}%",
+                )
+            end
         end
       end
     end
