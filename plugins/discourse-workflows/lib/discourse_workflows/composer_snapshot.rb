@@ -65,10 +65,16 @@ module DiscourseWorkflows
 
     # Drafts can be far longer than a post, so every step here is linear in the text length.
     def self.own_text(raw)
-      strip_quotes(strip_html_comments(raw.to_s)).gsub(BLOCKQUOTE_LINE_REGEXP, "")
+      text = raw.to_s
+      cleaned = strip_quotes(strip_html_comments(text))
+      return cleaned.gsub(BLOCKQUOTE_LINE_REGEXP, "") if cleaned.include?(">")
+
+      cleaned.equal?(raw) ? cleaned.dup : cleaned
     end
 
     def self.strip_html_comments(text)
+      return text if !text.include?(HTML_COMMENT_START)
+
       parts = []
       position = 0
 
@@ -80,33 +86,44 @@ module DiscourseWorkflows
         position = finish + HTML_COMMENT_END.length
       end
 
+      return text if position == 0
+
       parts << text[position..]
       parts.join
     end
 
     # Removes balanced quote blocks, nested ones included. An unclosed quote is kept as text.
     def self.strip_quotes(text)
+      return text if !text.include?("[")
+
+      scanner = StringScanner.new(text)
+      return text if !scanner.skip_until(QUOTE_TAG_REGEXP)
+
       parts = []
       open_quotes = []
-      scanner = StringScanner.new(text)
+      last_pos = 0
 
-      while (scanned = scanner.scan_until(QUOTE_TAG_REGEXP))
-        tag = scanner.matched
-        parts << scanned[0, scanned.length - tag.length]
+      loop do
+        match_len = scanner.matched_size
+        tag_start = scanner.pos - match_len
+        parts << text.byteslice(last_pos, tag_start - last_pos)
+        last_pos = scanner.pos
 
-        if tag.start_with?("[/")
+        if text.getbyte(tag_start + 1) == 47 # '/'
           if (start = open_quotes.pop)
             parts.pop(parts.size - start)
           else
-            parts << tag
+            parts << text.byteslice(tag_start, match_len)
           end
         else
           open_quotes << parts.size
-          parts << tag
+          parts << text.byteslice(tag_start, match_len)
         end
+
+        break if !scanner.skip_until(QUOTE_TAG_REGEXP)
       end
 
-      parts << scanner.rest
+      parts << text.byteslice(last_pos, text.bytesize - last_pos)
       parts.join
     end
 

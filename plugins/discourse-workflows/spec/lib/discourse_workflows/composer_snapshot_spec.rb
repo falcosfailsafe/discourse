@@ -37,6 +37,16 @@ RSpec.describe DiscourseWorkflows::ComposerSnapshot do
       expect(text).to eq(" Hello")
       expect(elapsed).to be < 0.5
     end
+
+    it "returns a mutable copy for plain drafts and preserves multi-byte UTF-8 text around quotes" do
+      plain = "Plain draft with [markdown link](https://discourse.org) and 日本語 🚀"
+      result = described_class.own_text(plain)
+      expect(result).to eq(plain)
+      expect(result).not_to equal(plain)
+
+      utf8_quoted = "前置き 🎉 [quote=\"太郎\"]引用されたテキスト[/quote] 本文です <!-- コメント --> 終わり"
+      expect(described_class.own_text(utf8_quoted)).to eq("前置き 🎉  本文です  終わり")
+    end
   end
 
   describe "#composable?" do
