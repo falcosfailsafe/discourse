@@ -60,6 +60,12 @@ module DiscourseAi
         end
 
         def unclosed_object_brace_count(arguments)
+          encoding = arguments.encoding
+          if encoding == Encoding::UTF_8 || encoding == Encoding::US_ASCII ||
+               encoding == Encoding::ASCII_8BIT
+            return unclosed_object_brace_count_bytes(arguments)
+          end
+
           unclosed_braces = 0
           escaped = false
           in_string = false
@@ -76,6 +82,36 @@ module DiscourseAi
             elsif !in_string && character == "}"
               unclosed_braces -= 1
             end
+          end
+
+          unclosed_braces
+        end
+
+        def unclosed_object_brace_count_bytes(arguments)
+          unclosed_braces = 0
+          escaped = false
+          in_string = false
+          idx = 0
+          len = arguments.bytesize
+
+          while idx < len
+            byte = arguments.getbyte(idx)
+            if escaped
+              escaped = false
+            elsif in_string
+              if byte == 92 # '\\'
+                escaped = true
+              elsif byte == 34 # '"'
+                in_string = false
+              end
+            elsif byte == 34 # '"'
+              in_string = true
+            elsif byte == 123 # '{'
+              unclosed_braces += 1
+            elsif byte == 125 # '}'
+              unclosed_braces -= 1
+            end
+            idx += 1
           end
 
           unclosed_braces

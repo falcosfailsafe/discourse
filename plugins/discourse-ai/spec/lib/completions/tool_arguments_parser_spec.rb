@@ -29,6 +29,13 @@ RSpec.describe DiscourseAi::Completions::ToolArgumentsParser do
     expect(described_class.parse('{"outer":{"inner":"value"')).to eq({ outer: { inner: "value" } })
   end
 
+  it "repairs omitted closing delimiters with escaped quotes, braces in strings, and UTF-8 text" do
+    raw = '{"outer":{"text":"日本語 🚀 \\"{not_a_brace}\\" \\\\ {still_string}"'
+    expect(described_class.parse(raw)).to eq(
+      { outer: { text: '日本語 🚀 "{not_a_brace}" \\ {still_string}' } },
+    )
+  end
+
   it "raises on invalid arguments" do
     expect { described_class.parse("not-json") }.to raise_error(JSON::ParserError)
   end
