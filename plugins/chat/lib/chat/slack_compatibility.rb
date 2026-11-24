@@ -17,20 +17,25 @@
 # convert user IDs into user mentions.
 module Chat
   class SlackCompatibility
-    MRKDWN_LINK_REGEX = Regexp.new(/(<[^\n<\|>]+>|<[^\n<\>]+>)/).freeze
+    MRKDWN_LINK_REGEX = /<[^\n<>]+>/
 
     class << self
       def process_text(text)
-        text = text.gsub("<!here>", "@here")
-        text = text.gsub("<!all>", "@all")
+        return text.dup if !text.include?("<")
+
+        if text.include?("<!")
+          text = text.gsub("<!here>", "@here") if text.include?("<!here>")
+          text = text.gsub("<!all>", "@all") if text.include?("<!all>")
+          return text if !text.include?("<")
+        end
 
         text.gsub(MRKDWN_LINK_REGEX) do |match|
-          link, title = match[1...-1].split("|")[0..1]
-
-          if title
-            "[#{title}](#{link})"
+          inner = match.byteslice(1, match.bytesize - 2)
+          if !inner.include?("|")
+            inner
           else
-            link
+            link, title = inner.split("|")
+            title ? "[#{title}](#{link})" : link
           end
         end
       end

@@ -27,5 +27,22 @@ describe Chat::SlackCompatibility do
       text = described_class.process_text("<!here> this is some important stuff <!all>")
       expect(text).to eq("@here this is some important stuff @all")
     end
+
+    it "preserves plain messages and handles pipe edge cases and UTF-8 titles" do
+      plain = "deployment succeeded on prod-1 without any mrkdwn links"
+      result = described_class.process_text(plain)
+      expect(result).to eq(plain)
+      expect(result).not_to equal(plain)
+
+      expect(described_class.process_text("<||>")).to eq("")
+      expect(described_class.process_text("<https://example.com|>")).to eq("https://example.com")
+      expect(described_class.process_text("<|label>")).to eq("[label]()")
+      expect(described_class.process_text("<https://example.com|a|b>")).to eq(
+        "[a](https://example.com)",
+      )
+      expect(described_class.process_text("<https://discourse.org|日本語フォーラム 🚀>")).to eq(
+        "[日本語フォーラム 🚀](https://discourse.org)",
+      )
+    end
   end
 end
