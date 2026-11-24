@@ -118,40 +118,41 @@ module Onebox
           min_space = 100
           a_lines = str.lines
           a_lines.each do |l|
-            l = l.chomp("\n") # remove new line
-            m = l.match(/\A[ ]*/) # find leading spaces 0 or more
-            if m.nil? || l.size == m[0].size || l.size == 0
-              next # SKIP no match or line is only spaces
-            else # no match | only spaces in line | empty line
-              m_str_length = m[0].size
-              if m_str_length <= 1 # minimum space is 1 or nothing we can break we found our minimum
-                min_space = m_str_length
-                break #stop iteration
-              end
-              min_space = m_str_length if m_str_length < min_space
+            len = l.end_with?("\n") ? l.bytesize - 1 : l.bytesize
+            next if len == 0
+
+            spaces = 0
+            spaces += 1 while spaces < len && l.getbyte(spaces) == 32
+            next if spaces == len
+
+            if spaces <= 1
+              min_space = spaces
+              break
             end
+            min_space = spaces if spaces < min_space
           end
-          a_lines.each do |l|
-            re = Regexp.new "^[ ]{#{min_space}}" #match the minimum spaces of the line
-            l.gsub!(re, "")
-          end
+
+          return str.dup if min_space == 0
+
+          prefix = " " * min_space
+          a_lines.each { |l| l.delete_prefix!(prefix) }
           a_lines.join
         end
 
         def line_number_helper(lines, start, selected)
-          lines = removeLeadingIndentation(lines.join).lines # A little ineffeicent we could modify  removeLeadingIndentation to accept array and return array, but for now it is only working with a string
+          lines = removeLeadingIndentation(lines.join).lines
           hash_builder = []
           output_builder = []
-          lines.map.with_index do |line, i|
-            lnum = (i.to_i + start)
+          lines.each_with_index do |line, i|
+            lnum = i + start
             hash_builder.push(
               line_number: lnum,
-              data: line.gsub("\n", ""),
-              selected: (selected == lnum) ? true : false,
+              data: line.delete_suffix("\n"),
+              selected: selected == lnum,
             )
-            output_builder.push "#{lnum}: #{line}"
+            output_builder.push("#{lnum}: #{line}")
           end
-          { output: output_builder.join(), array: hash_builder }
+          { output: output_builder.join, array: hash_builder }
         end
 
         def match

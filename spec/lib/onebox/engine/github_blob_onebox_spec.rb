@@ -62,5 +62,28 @@ RSpec.describe Onebox::Engine::GithubBlobOnebox do
         )
       end
     end
+
+    context "when a line range is requested" do
+      let(:link) do
+        "https://github.com/discourse/onebox/blob/master/lib/onebox/engine/github_blob_onebox.rb#L2-L5"
+      end
+
+      before do
+        stub_request(:get, raw_uri).to_return(
+          status: 200,
+          body: "module Outer\n    def greet\n      # コメント\n\n      puts 'hi'\n    end\nend\n",
+        )
+      end
+
+      it "strips common leading indentation while preserving relative indentation and blank lines" do
+        onebox = described_class.new(link)
+        expect(onebox.send(:removeLeadingIndentation, "    def a\n  \n      b\n    end\n")).to eq(
+          "def a\n  \n  b\nend\n",
+        )
+        expect(onebox.send(:removeLeadingIndentation, " one\ntwo\n")).to eq("one\ntwo\n")
+        expect(onebox.send(:removeLeadingIndentation, "zero\n  two\n")).to eq("zero\n  two\n")
+        expect(onebox.to_html).to include("def greet", "puts &#39;hi&#39;")
+      end
+    end
   end
 end
