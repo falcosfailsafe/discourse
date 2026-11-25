@@ -68,9 +68,7 @@ export default class Tooltip extends Service {
       return;
     }
 
-    if (!this.registeredTooltips.has(instance)) {
-      this.registeredTooltips.add(instance);
-    }
+    this.registeredTooltips.add(instance);
 
     instance.expanded = true;
 
@@ -102,9 +100,9 @@ export default class Tooltip extends Service {
 
     tooltip.expanded = false;
 
-    if (this.registeredTooltips.has(tooltip)) {
-      this.registeredTooltips.delete(tooltip);
-    }
+    // Call delete() directly without guarding on has(): trackedSet#has allocates
+    // an entry in its internal Map for absent keys, retaining destroyed instances.
+    this.registeredTooltips.delete(tooltip);
 
     await new Promise((resolve) =>
       schedule("afterRender", resolve as () => void)

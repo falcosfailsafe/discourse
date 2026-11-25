@@ -57,7 +57,7 @@ export default abstract class FloatKitInstance {
   abstract expanded: boolean;
 
   /** The rendered float body, assigned by the `apply-floating-ui` modifier. */
-  declare content: HTMLElement;
+  declare content?: HTMLElement;
 
   declare touchTimeout: ReturnType<typeof discourseLater>;
 

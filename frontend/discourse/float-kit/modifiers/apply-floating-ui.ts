@@ -65,7 +65,10 @@ export default class FloatKitApplyFloatingUi extends Modifier<FloatKitApplyFloat
 
   @bind
   async update() {
-    if (this.instance.triggerElement?.isConnected === false) {
+    if (
+      !this.instance.content ||
+      this.instance.triggerElement?.isConnected === false
+    ) {
       return;
     }
 
@@ -80,5 +83,8 @@ export default class FloatKitApplyFloatingUi extends Modifier<FloatKitApplyFloat
 
   teardown() {
     this.cleanup?.();
+    if (this.instance) {
+      this.instance.content = undefined;
+    }
   }
 }

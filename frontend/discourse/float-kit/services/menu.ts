@@ -86,9 +86,7 @@ export default class Menu extends Service {
       return;
     }
 
-    if (!this.registeredMenus.has(instance)) {
-      this.registeredMenus.add(instance);
-    }
+    this.registeredMenus.add(instance);
 
     instance.expanded = true;
 
@@ -148,9 +146,9 @@ export default class Menu extends Service {
 
     menu.expanded = false;
 
-    if (this.registeredMenus.has(menu)) {
-      this.registeredMenus.delete(menu);
-    }
+    // Call delete() directly without guarding on has(): trackedSet#has allocates
+    // an entry in its internal Map for absent keys, retaining destroyed instances.
+    this.registeredMenus.delete(menu);
 
     await new Promise((resolve) =>
       // cast away resolve's value parameter: `schedule`'s typed rest args would
