@@ -3,7 +3,7 @@ import { tracked } from "@glimmer/tracking";
 import { hash } from "@ember/helper";
 import { on } from "@ember/modifier";
 import { action } from "@ember/object";
-import { schedule } from "@ember/runloop";
+import { cancel, schedule } from "@ember/runloop";
 import { service } from "@ember/service";
 import { modifier as modifierFn } from "ember-modifier";
 import elementClass from "discourse/helpers/element-class";
@@ -58,6 +58,7 @@ export default class PostQuotedContent extends Component {
 
   #quotedPost = this.args.decoratorState?.get(this.statePostId);
   #collapsedElement;
+  #highlightTimer;
   #renderedText;
   #scrollToHighlight = false;
 
@@ -67,7 +68,13 @@ export default class PostQuotedContent extends Component {
       return;
     }
 
-    schedule("afterRender", () => {
+    cancel(this.#highlightTimer);
+    this.#highlightTimer = schedule("afterRender", () => {
+      this.#highlightTimer = null;
+      if (this.isDestroying) {
+        return;
+      }
+
       const highlights = highlightQuote(cookedElement, this.#quotedText);
       if (this.#scrollToHighlight) {
         this.#scrollToHighlight = false;
@@ -75,6 +82,13 @@ export default class PostQuotedContent extends Component {
       }
     });
   };
+
+  willDestroy() {
+    super.willDestroy(...arguments);
+    cancel(this.#highlightTimer);
+    this.#highlightTimer = null;
+    this.#collapsedElement = null;
+  }
 
   get extraDecorators() {
     return [
@@ -202,6 +216,9 @@ export default class PostQuotedContent extends Component {
   toggleExpanded() {
     this.#saveRenderedText();
     this.expanded = !this.expanded;
+    if (this.expanded) {
+      this.#collapsedElement = null;
+    }
     this.#scrollToHighlight = this.expanded;
     this.args.decoratorState?.set(this.stateExpandedId, this.expanded);
   }
