@@ -7,6 +7,7 @@ import didInsert from "@ember/render-modifiers/modifiers/did-insert";
 import { schedule } from "@ember/runloop";
 import { service } from "@ember/service";
 import { trustHTML } from "@ember/template";
+import { modifier } from "ember-modifier";
 import PluginOutlet from "discourse/components/plugin-outlet";
 import { actionDescriptionHtml } from "discourse/components/post-action-description";
 import TopicAdminMenu from "discourse/components/topic-admin-menu";
@@ -62,22 +63,20 @@ export default class TopicTimelineScrollArea extends Component {
   @service composer;
 
   @tracked current;
-  @tracked percentage = this._percentFor(
-    this.args.model,
-    this.args.enteredIndex
-  );
   @tracked total;
   @tracked date;
 
   /** @type {number | null} */
   @tracked lastReadPercentage = null;
   @tracked lastRead;
-  @tracked before;
-  @tracked after;
+  @tracked showLastRead = false;
   @tracked scrollareaHeight;
-  @tracked timelineScrollareaStyle;
   @tracked dragging = false;
   @tracked excerpt = "";
+
+  percentage = this._percentFor(this.args.model, this.args.enteredIndex);
+  before = 0;
+  after = 0;
 
   /** @type {IntersectionObserver | null} */
   intersectionObserver = null;
@@ -91,6 +90,39 @@ export default class TopicTimelineScrollArea extends Component {
   /** @type {number | null} */
   dragOffset = null;
 
+  registerBeforePadding = modifier((element) => {
+    this.#beforePaddingElement = element;
+    element.style.height = `${this.before}px`;
+    return () => {
+      if (this.#beforePaddingElement === element) {
+        this.#beforePaddingElement = null;
+      }
+    };
+  });
+
+  registerAfterPadding = modifier((element) => {
+    this.#afterPaddingElement = element;
+    element.style.height = `${this.after}px`;
+    return () => {
+      if (this.#afterPaddingElement === element) {
+        this.#afterPaddingElement = null;
+      }
+    };
+  });
+
+  #beforePaddingElement = null;
+  #afterPaddingElement = null;
+  #timelineContainer = null;
+  #scrollareaHeight;
+  #total;
+  #current;
+  #date;
+  #lastRead;
+  #lastReadPercentage = null;
+  #showLastRead = false;
+  #hasMeasuredDaysAgo = false;
+  #lastDaysAgo;
+
   constructor() {
     super(...arguments);
 
@@ -100,6 +132,9 @@ export default class TopicTimelineScrollArea extends Component {
       this.appEvents.on("composer:resized", this.calculatePosition);
       this.appEvents.on("composer:closed", this.calculatePosition);
       this.appEvents.on("composer:preview-toggled", this.calculatePosition);
+      window.addEventListener("resize", this.calculatePosition, {
+        passive: true,
+      });
     }
 
     this.intersectionObserver = new IntersectionObserver((entries) => {
@@ -126,6 +161,7 @@ export default class TopicTimelineScrollArea extends Component {
     super.willDestroy(...arguments);
 
     this.intersectionObserver.disconnect();
+    this.#timelineContainer = null;
 
     if (this.site.desktopView) {
       this.appEvents.off("composer:opened", this.calculatePosition);
@@ -133,6 +169,7 @@ export default class TopicTimelineScrollArea extends Component {
       this.appEvents.off("composer:closed", this.calculatePosition);
       this.appEvents.off("composer:preview-toggled", this.calculatePosition);
       this.appEvents.off("topic:current-post-scrolled", this.postScrolled);
+      window.removeEventListener("resize", this.calculatePosition);
     }
   }
 
@@ -181,26 +218,14 @@ export default class TopicTimelineScrollArea extends Component {
     );
   }
 
-  get beforePadding() {
-    return trustHTML(`height: ${this.before}px`);
-  }
-
-  get afterPadding() {
-    return trustHTML(`height: ${this.after}px`);
+  get timelineScrollareaStyle() {
+    return trustHTML(`height: ${this.scrollareaHeight}px`);
   }
 
   get hasBackPosition() {
     return (
       this.lastRead - this.current > 3 &&
       Math.abs(this.lastRead - this.total) > 1
-    );
-  }
-
-  get showLastRead() {
-    return (
-      this.hasBackPosition &&
-      (this.before + SCROLLER_HEIGHT - 5 < this.lastReadHeight ||
-        this.before > this.lastReadHeight + 25)
     );
   }
 
@@ -239,45 +264,7 @@ export default class TopicTimelineScrollArea extends Component {
 
   @bind
   calculatePosition() {
-    this.scrollareaHeight = this.#measureScrollareaHeight();
-    this.timelineScrollareaStyle = trustHTML(
-      `height: ${this.scrollareaHeight}px`
-    );
-
-    const topic = this.args.model;
-    const postStream = topic.postStream;
-    this.total = postStream.filteredPostsCount;
-
-    this.scrollPosition =
-      this.clamp(Math.floor(this.total * this.percentage), 0, this.total) + 1;
-
-    this.current = this.clamp(this.scrollPosition, 1, this.total);
-    const daysAgo = postStream.closestDaysAgoFor(this.current);
-
-    this.date =
-      daysAgo === undefined
-        ? null
-        : moment().subtract(daysAgo, "days").toDate();
-
-    const lastReadNumber = topic.last_read_post_number;
-    const lastReadId = topic.last_read_post_id;
-
-    if (lastReadId && lastReadNumber) {
-      const idx = postStream.progressIndexOfPostId({
-        id: lastReadId,
-        post_number: lastReadNumber,
-      });
-      this.lastRead = idx;
-      this.lastReadPercentage = this._percentFor(topic, idx);
-    }
-
-    if (this.position !== this.current) {
-      this.position = this.current;
-      this.updateScrollPosition(this.current);
-    }
-
-    this.before = (this.scrollareaHeight - SCROLLER_HEIGHT) * this.percentage;
-    this.after = this.scrollareaHeight - this.before - SCROLLER_HEIGHT;
+    this.#updatePosition({ measureHeight: true });
   }
 
   @debounce(50)
@@ -357,10 +344,9 @@ export default class TopicTimelineScrollArea extends Component {
 
   @bind
   postScrolled(e) {
-    this.current = e.postIndex;
-    this.percentage = e.percent;
-    this.calculatePosition();
     this.dockCheck();
+    this.percentage = e.percent;
+    this.#updatePosition({ measureHeight: false });
   }
 
   @action
@@ -369,8 +355,12 @@ export default class TopicTimelineScrollArea extends Component {
   }
 
   dockCheck() {
-    const timeline = document.querySelector(".timeline-container");
-    const timelineHeight = timeline?.offsetHeight || 400;
+    if (!this.#timelineContainer?.isConnected) {
+      this.#timelineContainer =
+        this.scrollareaElement?.closest(".timeline-container") ??
+        document.querySelector(".timeline-container");
+    }
+    const timelineHeight = this.#timelineContainer?.offsetHeight || 400;
 
     const prevDockAt = this.dockAt;
     const positionTop = headerOffset() + window.pageYOffset;
@@ -405,7 +395,7 @@ export default class TopicTimelineScrollArea extends Component {
   }
 
   commit() {
-    this.calculatePosition();
+    this.#updatePosition({ measureHeight: false });
 
     if (!this.dragging) {
       if (this.current === this.scrollPosition) {
@@ -428,6 +418,103 @@ export default class TopicTimelineScrollArea extends Component {
   @action
   registerScroller(element) {
     this.scrollerElement = element;
+  }
+
+  #updatePosition({ measureHeight }) {
+    if (measureHeight || this.#scrollareaHeight == null) {
+      const nextScrollareaHeight = this.#measureScrollareaHeight();
+      if (this.#scrollareaHeight !== nextScrollareaHeight) {
+        this.#scrollareaHeight = nextScrollareaHeight;
+        this.scrollareaHeight = nextScrollareaHeight;
+      }
+    }
+
+    const topic = this.args.model;
+    const postStream = topic.postStream;
+    const nextTotal = postStream.filteredPostsCount;
+    if (this.#total !== nextTotal) {
+      this.#total = nextTotal;
+      this.total = nextTotal;
+    }
+
+    this.scrollPosition =
+      this.clamp(Math.floor(this.#total * this.percentage), 0, this.#total) + 1;
+
+    const nextCurrent = this.clamp(this.scrollPosition, 1, this.#total);
+    if (this.#current !== nextCurrent) {
+      this.#current = nextCurrent;
+      this.current = nextCurrent;
+    }
+
+    const daysAgo = postStream.closestDaysAgoFor(this.#current);
+    if (!this.#hasMeasuredDaysAgo || daysAgo !== this.#lastDaysAgo) {
+      this.#hasMeasuredDaysAgo = true;
+      this.#lastDaysAgo = daysAgo;
+      const nextDate =
+        daysAgo === undefined
+          ? null
+          : moment().subtract(daysAgo, "days").toDate();
+      if (this.#date !== nextDate) {
+        this.#date = nextDate;
+        this.date = nextDate;
+      }
+    }
+
+    const lastReadNumber = topic.last_read_post_number;
+    const lastReadId = topic.last_read_post_id;
+
+    if (lastReadId && lastReadNumber) {
+      const idx = postStream.progressIndexOfPostId({
+        id: lastReadId,
+        post_number: lastReadNumber,
+      });
+      if (this.#lastRead !== idx) {
+        this.#lastRead = idx;
+        this.lastRead = idx;
+      }
+      const nextLastReadPercentage = this._percentFor(topic, idx);
+      if (this.#lastReadPercentage !== nextLastReadPercentage) {
+        this.#lastReadPercentage = nextLastReadPercentage;
+        this.lastReadPercentage = nextLastReadPercentage;
+      }
+    }
+
+    if (this.position !== this.#current) {
+      this.position = this.#current;
+      this.updateScrollPosition(this.#current);
+    }
+
+    const before = (this.#scrollareaHeight - SCROLLER_HEIGHT) * this.percentage;
+    const after = this.#scrollareaHeight - before - SCROLLER_HEIGHT;
+
+    if (this.before !== before) {
+      this.before = before;
+      if (this.#beforePaddingElement) {
+        this.#beforePaddingElement.style.height = `${before}px`;
+      }
+    }
+
+    if (this.after !== after) {
+      this.after = after;
+      if (this.#afterPaddingElement) {
+        this.#afterPaddingElement.style.height = `${after}px`;
+      }
+    }
+
+    const hasBackPosition =
+      this.#lastRead - this.#current > 3 &&
+      Math.abs(this.#lastRead - this.#total) > 1;
+    const lastReadHeight = Math.round(
+      this.#lastReadPercentage * this.#scrollareaHeight
+    );
+    const nextShowLastRead =
+      hasBackPosition &&
+      (before + SCROLLER_HEIGHT - 5 < lastReadHeight ||
+        before > lastReadHeight + 25);
+    if (this.#showLastRead !== nextShowLastRead) {
+      this.#showLastRead = nextShowLastRead;
+      this.showLastRead = nextShowLastRead;
+    }
   }
 
   #measureScrollareaHeight() {
@@ -593,7 +680,7 @@ export default class TopicTimelineScrollArea extends Component {
           {{! eslint-disable ember/template-no-invalid-interactive }}
           <div
             class="timeline-padding"
-            style={{this.beforePadding}}
+            {{this.registerBeforePadding}}
             {{on "click" this.updatePercentage}}
           ></div>
 
@@ -611,7 +698,7 @@ export default class TopicTimelineScrollArea extends Component {
           {{! eslint-disable ember/template-no-invalid-interactive }}
           <div
             class="timeline-padding"
-            style={{this.afterPadding}}
+            {{this.registerAfterPadding}}
             {{on "click" this.updatePercentage}}
           ></div>
 

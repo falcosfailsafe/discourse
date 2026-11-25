@@ -29,14 +29,26 @@ class TopicNavigationInfo {
   @tracked topicProgressExpanded = false;
 
   /** @type {{ postIndex: number | null, percent: number } | null} */
-  @tracked prevEvent = null;
-
+  #prevEvent = null;
   #postCountFetcher;
   #renderTimelineFetcher;
 
   constructor(postCountFetcher, renderTimelineFetcher) {
     this.#postCountFetcher = postCountFetcher;
     this.#renderTimelineFetcher = renderTimelineFetcher;
+  }
+
+  get prevEvent() {
+    // Only invalidate when switching between timeline/progress or fullscreen
+    // modes, rather than on every scroll tick, so scrolling does not schedule
+    // Ember rerenders while newly mounted views still receive the latest event.
+    void this.renderTimeline;
+    void this.topicProgressExpanded;
+    return this.#prevEvent;
+  }
+
+  set prevEvent(event) {
+    this.#prevEvent = event;
   }
 
   get renderTimeline() {

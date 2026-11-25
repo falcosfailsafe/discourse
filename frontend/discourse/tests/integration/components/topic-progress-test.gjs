@@ -64,6 +64,80 @@ module("Integration | Component | topic-progress", function (hooks) {
       .doesNotHaveAttribute("role", "the wrapper is unchanged");
   });
 
+  test("updates progress bar fill directly on scroll without rewriting unchanged post count", async function (assert) {
+    this.siteSettings.mobile_footer_navigation = false;
+    const topic = {
+      currentPost: 3,
+      postStream: { loaded: true, filteredPostsCount: 10 },
+    };
+    const appEvents = this.owner.lookup("service:app-events");
+
+    await render(<template><TopicProgress @topic={{topic}} /></template>);
+
+    appEvents.trigger("topic:current-post-scrolled", {
+      postIndex: 3,
+      percent: 0.3,
+    });
+    await settled();
+
+    assert.dom("#topic-progress .nums").hasText("3 / 10");
+    assert
+      .dom("#topic-progress")
+      .hasAttribute("style", "--progress-bg-width: 30.00%");
+
+    let numsMutations = 0;
+    const numsObserver = new MutationObserver(() => {
+      numsMutations += 1;
+    });
+    numsObserver.observe(document.querySelector("#topic-progress .nums"), {
+      subtree: true,
+      childList: true,
+      characterData: true,
+    });
+
+    try {
+      appEvents.trigger("topic:current-post-scrolled", {
+        postIndex: 3,
+        percent: 0.325,
+      });
+      assert
+        .dom("#topic-progress")
+        .hasAttribute(
+          "style",
+          "--progress-bg-width: 32.50%",
+          "fill width updates immediately in DOM"
+        );
+
+      appEvents.trigger("topic:current-post-scrolled", {
+        postIndex: 3,
+        percent: 0.35,
+      });
+      await settled();
+
+      assert
+        .dom("#topic-progress")
+        .hasAttribute("style", "--progress-bg-width: 35.00%");
+      assert.strictEqual(
+        numsMutations,
+        0,
+        "post counter DOM is untouched when postIndex is unchanged"
+      );
+
+      appEvents.trigger("topic:current-post-scrolled", {
+        postIndex: 4,
+        percent: 0.4,
+      });
+      await settled();
+
+      assert.dom("#topic-progress .nums").hasText("4 / 10");
+      assert
+        .dom("#topic-progress")
+        .hasAttribute("style", "--progress-bg-width: 40.00%");
+    } finally {
+      numsObserver.disconnect();
+    }
+  });
+
   module("with mobile navigation", function (nestedHooks) {
     nestedHooks.beforeEach(function () {
       forceMobile();

@@ -3,11 +3,11 @@ import Component from "@ember/component";
 import { action, computed, set } from "@ember/object";
 import { scheduleOnce } from "@ember/runloop";
 import { service } from "@ember/service";
-import { trustHTML } from "@ember/template";
 import {
   attributeBindings,
   classNameBindings,
 } from "@ember-decorators/component";
+import { modifier } from "ember-modifier";
 import PluginOutlet from "discourse/components/plugin-outlet";
 import DButton from "discourse/ui-kit/d-button";
 import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
@@ -24,6 +24,18 @@ export default class TopicProgress extends Component {
 
   /** @type {number | null} */
   progressPosition = null;
+
+  registerProgressElement = modifier((element) => {
+    this.#progressElement = element;
+    this.#applyProgressStyle();
+    return () => {
+      if (this.#progressElement === element) {
+        this.#progressElement = null;
+      }
+    };
+  });
+
+  #progressElement = null;
 
   /** @type {number | string | null} */
   _streamPercentage = null;
@@ -86,7 +98,6 @@ export default class TopicProgress extends Component {
     return this.ariaRole ? i18n("topic.progress.title") : null;
   }
 
-  @computed("_streamPercentage")
   get progressStyle() {
     return `--progress-bg-width: ${this._streamPercentage || 0}%`;
   }
@@ -134,19 +145,30 @@ export default class TopicProgress extends Component {
     this.jumpToPost(this.get("topic.last_read_post_number"));
   }
 
+  #applyProgressStyle() {
+    this.#progressElement?.setAttribute("style", this.progressStyle);
+  }
+
   _topicScrolled(event) {
+    let nextPosition;
+    let nextPercentage;
+
     if (this.docked && !this.mobileTabBar.enabled) {
-      this.setProperties({
-        progressPosition: this.get("postStream.filteredPostsCount"),
-        _streamPercentage: 100,
-      });
-      return;
+      nextPosition = this.get("postStream.filteredPostsCount");
+      nextPercentage = 100;
+    } else {
+      nextPosition = event.postIndex;
+      nextPercentage = (event.percent * 100).toFixed(2);
     }
 
-    this.setProperties({
-      progressPosition: event.postIndex,
-      _streamPercentage: (event.percent * 100).toFixed(2),
-    });
+    if (this.progressPosition !== nextPosition) {
+      this.set("progressPosition", nextPosition);
+    }
+
+    if (this._streamPercentage !== nextPercentage) {
+      this._streamPercentage = nextPercentage;
+      this.#applyProgressStyle();
+    }
   }
 
   <template>
@@ -175,10 +197,10 @@ export default class TopicProgress extends Component {
         <DButton
           class="btn-transparent {{if this.hideProgress 'hidden'}}"
           id="topic-progress"
-          style={{trustHTML this.progressStyle}}
           @action={{this.onExpandToggle}}
           @title="topic.progress.title"
           @translatedAriaLabel={{this.progressLabel}}
+          {{this.registerProgressElement}}
         >
           <span class="nums">
             <span>{{this.progressPosition}}</span>
@@ -204,8 +226,8 @@ export default class TopicProgress extends Component {
         aria-label={{i18n "topic.progress.title"}}
         class={{if this.hideProgress "hidden"}}
         id="topic-progress"
-        style={{trustHTML this.progressStyle}}
         title={{i18n "topic.progress.title"}}
+        {{this.registerProgressElement}}
       >
         <div class="nums">
           <span>{{this.progressPosition}}</span>
