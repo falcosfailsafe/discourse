@@ -1,3 +1,4 @@
+import { tracked } from "@glimmer/tracking";
 import { cancel, schedule } from "@ember/runloop";
 import { trustHTML } from "@ember/template";
 import { modifier } from "ember-modifier";
@@ -54,6 +55,29 @@ const UNCLOAKING_HYSTERESIS_RATIO = 0.05;
 // Set to true to visualize the eyeline position with a red line
 const DEBUG_EYELINE = false;
 
+const UNCLOAKED_DATA = Object.freeze({ active: false });
+
+// Active tracker instances so preventCloaking() can immediately sync the
+// affected post's per-post cloaking state.
+const activeTrackers = new Set();
+
+class PostCloakingCell {
+  @tracked data;
+  current;
+
+  constructor(initialData = UNCLOAKED_DATA) {
+    this.data = initialData;
+    this.current = initialData;
+  }
+
+  set(nextData) {
+    if (this.current !== nextData) {
+      this.current = nextData;
+      this.data = nextData;
+    }
+  }
+}
+
 // Global flag to enable/disable the cloaking mechanism
 let cloakingEnabled = true;
 
@@ -66,6 +90,15 @@ let cloakingEnabled = true;
  */
 export function disableCloaking() {
   cloakingEnabled = false;
+}
+
+/**
+ * Globally enables the cloaking mechanism for all posts
+ *
+ * @returns {void}
+ */
+export function enableCloaking() {
+  cloakingEnabled = true;
 }
 
 // Dictionary containing the set of post IDs that should never be cloaked.
@@ -89,6 +122,10 @@ export function preventCloaking(postId, prevent = true) {
     cloakingPrevented.posts.add(postId);
   } else {
     cloakingPrevented.posts.delete(postId);
+  }
+
+  for (const tracker of activeTrackers) {
+    tracker.syncCloakingStateForPostId(postId);
   }
 }
 
@@ -122,12 +159,53 @@ export default class PostStreamViewportTracker {
   #cloakOffset;
 
   /**
-   * Map of post IDs to their styles when cloaked
-   * Used to maintain correct scroll position when posts are cloaked
-   * @type {Object<number, {height: number, margin: string}>}
+   * Current cloaking boundaries (minimum and maximum uncloaked post numbers)
+   * @type {number}
    * @private
    */
-  #cloakedPostsStyle = {};
+  #cloakAbove = 0;
+
+  /**
+   * @type {number}
+   * @private
+   */
+  #cloakBelow = 0;
+
+  /**
+   * Pending requestAnimationFrame ID for syncing cloaking cells
+   * @type {number|null}
+   * @private
+   */
+  #cloakFrameId = null;
+
+  /**
+   * Pending boundaries to apply on the next animation frame
+   * @type {{ above: number, below: number } | null}
+   * @private
+   */
+  #pendingCloakBoundaries = null;
+
+  /**
+   * Map of post IDs to cached cloaking dimensions and frozen style payloads
+   * @type {Map<number, { height: number, margin: string, data: Readonly<{ active: true, style: import("@ember/template").TrustedHTML }> }>}
+   * @private
+   */
+  #cloakedPostsData = new Map();
+
+  /**
+   * Per-post tracked cloaking state cells so boundary changes only invalidate
+   * the posts whose cloaked state actually flips.
+   * @type {Map<number, PostCloakingCell>}
+   * @private
+   */
+  #postCloakingCells = new Map();
+
+  /**
+   * Non-trackOnly registered posts keyed by post ID for syncing cloaking cells.
+   * @type {Map<number, import("discourse/models/post").default>}
+   * @private
+   */
+  #registeredPosts = new Map();
 
   /**
    * IntersectionObserver that tracks which posts should be cloaked/uncloaked
@@ -293,6 +371,9 @@ export default class PostStreamViewportTracker {
       if (trackOnly) {
         this.#trackOnlyElements.add(element);
       } else {
+        if (post) {
+          this.#registeredPosts.set(post.id, post);
+        }
         this.#cloakingObserver?.observe(element);
       }
       this.#viewportObserver?.observe(element);
@@ -307,8 +388,20 @@ export default class PostStreamViewportTracker {
         this.#trackOnlyElements.delete(element);
         if (!trackOnly) {
           this.#cloakingObserver?.unobserve(element);
+          if (post) {
+            this.#registeredPosts.delete(post.id);
+            this.#cloakedPostsData.delete(post.id);
+            this.#postCloakingCells.delete(post.id);
+            this.#uncloakedPostNumbers.delete(post.post_number);
+          }
         }
         this.#viewportObserver?.unobserve(element);
+        if (
+          post &&
+          this.#postsOnScreen[post.post_number]?.element === element
+        ) {
+          delete this.#postsOnScreen[post.post_number];
+        }
       }
     };
   });
@@ -346,6 +439,7 @@ export default class PostStreamViewportTracker {
         ...trackedArgs
       }
     ) => {
+      activeTrackers.add(this);
       this.#wrapperElement = element;
       this.#eyeline = eyeline;
 
@@ -384,6 +478,9 @@ export default class PostStreamViewportTracker {
 
       // cleanup
       return () => {
+        activeTrackers.delete(this);
+        this.#cancelPendingCloakingFrame();
+
         // clear observers
         this.#cloakingObserver?.disconnect();
         this.#viewportObserver?.disconnect();
@@ -393,8 +490,11 @@ export default class PostStreamViewportTracker {
           this.#setupEyelineDebugElement(false);
         }
 
-        // clear collections
-        this.#cloakedPostsStyle = {};
+        // clear collections (keep #registeredPosts and #postCloakingCells for
+        // elements that remain mounted across setup modifier re-runs, e.g. headerOffset)
+        this.#cloakedPostsData.clear();
+        this.#cloakAbove = 0;
+        this.#cloakBelow = 0;
         this.#postsOnScreen = {};
         this.#uncloakedPostNumbers.clear();
 
@@ -500,6 +600,9 @@ export default class PostStreamViewportTracker {
    * @returns {void}
    */
   destroy() {
+    activeTrackers.delete(this);
+    this.#cancelPendingCloakingFrame();
+
     // cancel scheduled timers
     for (const timer of this.#scheduledTimers.values()) {
       cancel(timer);
@@ -509,9 +612,12 @@ export default class PostStreamViewportTracker {
     this.#viewportObserver?.disconnect();
     this.#cloakingObserver?.disconnect();
 
-    // clear DOM references
+    // clear DOM references and per-post cloaking state
     this.#observedPostElements.clear();
     this.#trackOnlyElements.clear();
+    this.#registeredPosts.clear();
+    this.#cloakedPostsData.clear();
+    this.#postCloakingCells.clear();
 
     // clear the set of posts with cloaking prevented
     cloakingPrevented.topicId = null;
@@ -519,44 +625,54 @@ export default class PostStreamViewportTracker {
   }
 
   /**
-   * Determines if a post should be cloaked based on its position relative to the viewport boundaries
-   * Returns an object containing cloaking state and optional height style when cloaking is active
+   * Returns the cloaking state for a single post.
+   * When called without explicit boundaries, subscribes only to that post's
+   * tracked cloaking cell so scrolling only invalidates posts whose cloaking
+   * state actually changes.
    *
    * @param {import("discourse/models/post").default | null | undefined} post - The post model
-   * @param {Object} options - Cloaking boundary options
-   * @param {number} options.above - The minimum post number to keep visible
-   * @param {number} options.below - The maximum post number to keep visible
+   * @param {{ above?: number, below?: number }} [boundaries] - Optional explicit cloaking boundaries
    * @returns {{ active: boolean, style?: import("@ember/template").TrustedHTML }} Object with active boolean and optional style
    */
   @bind
-  getCloakingData(post, { above, below }) {
-    if (
-      !cloakingEnabled ||
-      !post ||
-      cloakingPrevented.posts.has(post.id) ||
-      this.#postsOnScreen[post.post_number]
-    ) {
-      return { active: false };
+  getCloakingData(post, boundaries) {
+    if (!cloakingEnabled || !post) {
+      return UNCLOAKED_DATA;
     }
 
-    const style = this.#cloakedPostsStyle[post.id];
-    if (style && (post.post_number < above || post.post_number > below)) {
-      const { height, margin } = style;
-
-      // we're using getBoundingClientRect().height to get the element height before cloaking.
-      // we need to ensure the box-model is border-box to ensure the height is matched with the original
-      // element height
-      return {
-        active: true,
-        style: trustHTML(
-          `height:${height}px !important;` +
-            `margin:${margin} !important;` +
-            "box-sizing: border-box !important;"
-        ),
-      };
+    if (boundaries !== undefined) {
+      return this.#computeCloakingData(
+        post,
+        boundaries.above,
+        boundaries.below
+      );
     }
 
-    return { active: false };
+    let cell = this.#postCloakingCells.get(post.id);
+    if (!cell) {
+      const initialData = this.#computeCloakingData(
+        post,
+        this.#cloakAbove,
+        this.#cloakBelow
+      );
+      cell = new PostCloakingCell(initialData);
+      this.#postCloakingCells.set(post.id, cell);
+    }
+
+    return cell.data;
+  }
+
+  /**
+   * Recomputes the tracked cloaking state for a single post by ID.
+   *
+   * @param {number} postId - The ID of the post to sync
+   * @returns {void}
+   */
+  syncCloakingStateForPostId(postId) {
+    const post = this.#registeredPosts.get(postId);
+    if (post) {
+      this.#syncPostCloakingCell(post);
+    }
   }
 
   /**
@@ -591,7 +707,7 @@ export default class PostStreamViewportTracker {
       ) {
         // entering the visibility area
         this.#uncloakedPostNumbers.add(postNumber);
-        delete this.#cloakedPostsStyle[post.id];
+        this.#cloakedPostsData.delete(post.id);
       }
     } else {
       // entering the cloaking area
@@ -601,10 +717,30 @@ export default class PostStreamViewportTracker {
       // we are using `getBoundingClientRect().height` because the element height is a floating number and
       // `element.offsetHeight` returns an integer, which causes rounding error issues in the post tracking
       // `getBoundingClientRect()` also ensures that the padding/border were considered
-      this.#cloakedPostsStyle[post.id] = {
-        height: target.getBoundingClientRect().height,
-        margin: getComputedStyle(target).margin,
-      };
+      const height = target.getBoundingClientRect().height;
+      const margin = getComputedStyle(target).margin;
+      const existing = this.#cloakedPostsData.get(post.id);
+
+      if (
+        !existing ||
+        existing.height !== height ||
+        existing.margin !== margin
+      ) {
+        // Cache the frozen object and TrustedHTML instance so repeated lookups
+        // preserve reference identity and avoid redundant DOM style writes.
+        this.#cloakedPostsData.set(post.id, {
+          height,
+          margin,
+          data: Object.freeze({
+            active: true,
+            style: trustHTML(
+              `height:${height}px !important;` +
+                `margin:${margin} !important;` +
+                "box-sizing: border-box !important;"
+            ),
+          }),
+        });
+      }
     }
 
     // update the cloaking boundaries
@@ -631,9 +767,16 @@ export default class PostStreamViewportTracker {
     const { target, isIntersecting } = entry;
     const post = elementsToPost.get(target);
 
+    if (!post) {
+      return;
+    }
+
     if (isIntersecting) {
       // entered the viewport
       this.#postsOnScreen[post.post_number] = { post, element: target };
+      if (this.#postCloakingCells.get(post.id)?.current.active) {
+        this.#syncPostCloakingCell(post);
+      }
     } else {
       // exited the viewport
       delete this.#postsOnScreen[post.post_number];
@@ -952,6 +1095,49 @@ export default class PostStreamViewportTracker {
    * @private
    * @returns {void}
    */
+  #cancelPendingCloakingFrame() {
+    if (this.#cloakFrameId !== null) {
+      cancelAnimationFrame(this.#cloakFrameId);
+      this.#cloakFrameId = null;
+    }
+    this.#pendingCloakBoundaries = null;
+  }
+
+  #computeCloakingData(post, above, below) {
+    if (
+      !cloakingEnabled ||
+      !post ||
+      cloakingPrevented.posts.has(post.id) ||
+      this.#postsOnScreen[post.post_number]
+    ) {
+      return UNCLOAKED_DATA;
+    }
+
+    const entry = this.#cloakedPostsData.get(post.id);
+    if (entry && (post.post_number < above || post.post_number > below)) {
+      return entry.data;
+    }
+
+    return UNCLOAKED_DATA;
+  }
+
+  #syncPostCloakingCell(post) {
+    const cell = this.#postCloakingCells.get(post.id);
+    if (!cell) {
+      return;
+    }
+
+    cell.set(
+      this.#computeCloakingData(post, this.#cloakAbove, this.#cloakBelow)
+    );
+  }
+
+  #syncAllCloakingCells() {
+    for (const post of this.#registeredPosts.values()) {
+      this.#syncPostCloakingCell(post);
+    }
+  }
+
   #updateCloakBoundaries() {
     const uncloakedPostNumbers = Array.from(this.#uncloakedPostNumbers);
 
@@ -964,7 +1150,36 @@ export default class PostStreamViewportTracker {
       below = Math.max(postNumber, below);
     }
 
-    this.#setCloakingBoundaries(above, below);
+    this.#pendingCloakBoundaries = { above, below };
+
+    if (this.#cloakFrameId !== null) {
+      return;
+    }
+
+    // Batch cloaking state updates into an animation frame to prevent Chrome
+    // from logging [Violation] 'setTimeout' handler took <N>ms on fast scroll.
+    this.#cloakFrameId = requestAnimationFrame(() => {
+      this.#cloakFrameId = null;
+
+      if (!this.#pendingCloakBoundaries) {
+        return;
+      }
+
+      const { above: nextAbove, below: nextBelow } =
+        this.#pendingCloakBoundaries;
+      this.#pendingCloakBoundaries = null;
+
+      const boundariesChanged =
+        this.#cloakAbove !== nextAbove || this.#cloakBelow !== nextBelow;
+      this.#cloakAbove = nextAbove;
+      this.#cloakBelow = nextBelow;
+
+      if (boundariesChanged) {
+        this.#setCloakingBoundaries?.(nextAbove, nextBelow);
+      }
+
+      this.#syncAllCloakingCells();
+    });
   }
 
   /**
