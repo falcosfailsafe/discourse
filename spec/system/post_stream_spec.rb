@@ -117,6 +117,66 @@ describe "Post stream" do
       expect(post_stream).to have_css("> [data-post-number='1'].post-stream--cloaked")
     end
 
+    it "does not rewrite style attributes on already-cloaked posts when scrolling" do
+      visit "/t/#{topic.slug}/#{topic.id}/1"
+
+      post_stream = find(".post-stream")
+      expect(post_stream).to have_css(".post-stream--cloaked")
+
+      # Scroll to the bottom so the top posts are cloaked, then scroll back up
+      # slightly so cloaking boundaries shift while top posts remain cloaked.
+      send_keys(:end)
+      expect(post_stream).to have_css("> [data-post-number='1'].post-stream--cloaked")
+
+      result = page.evaluate_async_script(<<~JS)
+          const done = arguments[arguments.length - 1];
+          const ps = document.querySelector(".post-stream");
+          const initialCloaked = new Set(
+            [...ps.querySelectorAll(":scope > .post-stream--cloaked")].map(
+              (el) => el.dataset.postNumber
+            )
+          );
+          const mutatedAlreadyCloaked = new Set();
+          const mutatedTransitioned = new Set();
+
+          const observer = new MutationObserver((records) => {
+            for (const record of records) {
+              if (record.type === "attributes" && record.attributeName === "style") {
+                const postNumber = record.target.dataset?.postNumber;
+                if (!postNumber) continue;
+                if (
+                  initialCloaked.has(postNumber) &&
+                  record.target.classList.contains("post-stream--cloaked")
+                ) {
+                  mutatedAlreadyCloaked.add(postNumber);
+                } else {
+                  mutatedTransitioned.add(postNumber);
+                }
+              }
+            }
+          });
+
+          observer.observe(ps, {
+            subtree: true,
+            attributes: true,
+            attributeFilter: ["style"],
+          });
+
+          window.scrollBy(0, -600);
+
+          setTimeout(() => {
+            observer.disconnect();
+            done({
+              alreadyCloaked: [...mutatedAlreadyCloaked],
+              transitioned: [...mutatedTransitioned],
+            });
+          }, 400);
+        JS
+
+      expect(result["transitioned"]).not_to be_empty
+      expect(result["alreadyCloaked"]).to be_empty
+    end
+
     it "keeps the state of quoted posts after uncloaking them" do
       first_post = posts[0]
       second_post = posts[1]
