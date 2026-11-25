@@ -7,6 +7,7 @@ import {
   click,
   find,
   render,
+  rerender,
   settled,
   triggerEvent,
   triggerKeyEvent,
@@ -706,5 +707,127 @@ module("Integration | Component | FloatKit | DTooltip", function (hooks) {
     assert
       .dom("#custom-tooltip-portal .fk-d-tooltip__content")
       .exists("tooltip renders in custom portal outlet");
+  });
+
+  test("tearing down an unopened tooltip releases its trigger without calling onClose or registeredTooltips.has", async function (assert) {
+    const rendered = tracked(true);
+    let api;
+    let closeCalls = 0;
+    const onRegisterApi = (instance) => (api = instance);
+    const onClose = () => closeCalls++;
+
+    const tooltipService = getOwner(this).lookup("service:tooltip");
+    const originalRegisteredTooltips = tooltipService.registeredTooltips;
+    let hasCalls = 0;
+    tooltipService.registeredTooltips = new Proxy(originalRegisteredTooltips, {
+      get(target, prop, receiver) {
+        if (prop === "has") {
+          hasCalls++;
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+
+    try {
+      await render(
+        <template>
+          {{#if rendered.value}}
+            <DTooltip
+              @content="content"
+              @inline={{true}}
+              @label="label"
+              @onClose={{onClose}}
+              @onRegisterApi={{onRegisterApi}}
+            />
+          {{/if}}
+        </template>
+      );
+
+      assert.notStrictEqual(
+        api._trigger,
+        undefined,
+        "trigger reference is stored while mounted"
+      );
+
+      rendered.value = false;
+      await rerender();
+      await settled();
+
+      assert.strictEqual(
+        closeCalls,
+        0,
+        "onClose is not invoked when tearing down an unopened tooltip"
+      );
+      assert.strictEqual(
+        hasCalls,
+        0,
+        "teardown does not call trackedSet#has for an unregistered tooltip"
+      );
+      assert.strictEqual(
+        api._trigger,
+        undefined,
+        "trigger DOM reference is released on teardown"
+      );
+      assert.strictEqual(
+        api.content,
+        undefined,
+        "content DOM reference is released on teardown"
+      );
+
+      await tooltipService.close(api);
+      assert.strictEqual(
+        hasCalls,
+        0,
+        "tooltipService.close does not call trackedSet#has for an unregistered tooltip"
+      );
+    } finally {
+      tooltipService.registeredTooltips = originalRegisteredTooltips;
+    }
+  });
+
+  test("tearing down an opened tooltip closes it and releases DOM references", async function (assert) {
+    const rendered = tracked(true);
+    let api;
+    const onRegisterApi = (instance) => (api = instance);
+
+    await render(
+      <template>
+        {{#if rendered.value}}
+          <DTooltip
+            @content="content"
+            @inline={{true}}
+            @label="label"
+            @onRegisterApi={{onRegisterApi}}
+          />
+        {{/if}}
+      </template>
+    );
+
+    await hover();
+    assert.dom(".fk-d-tooltip__content").exists();
+
+    const tooltipService = getOwner(this).lookup("service:tooltip");
+    assert.strictEqual(tooltipService.registeredTooltips.size, 1);
+
+    rendered.value = false;
+    await rerender();
+    await settled();
+
+    assert.dom(".fk-d-tooltip__content").doesNotExist("the float is gone");
+    assert.strictEqual(
+      tooltipService.registeredTooltips.size,
+      0,
+      "tooltip is removed from registeredTooltips"
+    );
+    assert.strictEqual(
+      api._trigger,
+      undefined,
+      "trigger DOM reference is released after closing on teardown"
+    );
+    assert.strictEqual(
+      api.content,
+      undefined,
+      "content DOM reference is released after closing on teardown"
+    );
   });
 });

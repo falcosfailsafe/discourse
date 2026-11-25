@@ -231,7 +231,20 @@ export default class DMenuInstance extends FloatKitInstance {
 
   @action
   destroy() {
-    this.close();
-    this.tearDownListeners();
+    if (this._trigger) {
+      this.tearDownListeners();
+    }
+    this.openedByDelayedHover = false;
+
+    if (this.expanded) {
+      this.close({ focusTrigger: false }).finally(() => {
+        this._trigger = undefined;
+        this.content = undefined;
+      });
+    } else {
+      this.menu.registeredMenus.delete(this);
+      this._trigger = undefined;
+      this.content = undefined;
+    }
   }
 }

@@ -1519,4 +1519,117 @@ module("Integration | Component | FloatKit | DMenu", function (hooks) {
         "scrolling the nearest scrollable ancestor closes the menu"
       );
   });
+
+  test("tearing down an unopened menu releases its trigger without calling onClose or registeredMenus.has", async function (assert) {
+    const rendered = tracked(true);
+    let api;
+    let closeCalls = 0;
+    const onRegisterApi = (instance) => (api = instance);
+    const onClose = () => closeCalls++;
+
+    const menuService = getOwner(this).lookup("service:menu");
+    const originalRegisteredMenus = menuService.registeredMenus;
+    let hasCalls = 0;
+    menuService.registeredMenus = new Proxy(originalRegisteredMenus, {
+      get(target, prop, receiver) {
+        if (prop === "has") {
+          hasCalls++;
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+
+    try {
+      await render(
+        <template>
+          {{#if rendered.value}}
+            <DMenu
+              @content="content"
+              @inline={{true}}
+              @label="label"
+              @onClose={{onClose}}
+              @onRegisterApi={{onRegisterApi}}
+            />
+          {{/if}}
+        </template>
+      );
+
+      assert.notStrictEqual(
+        api._trigger,
+        undefined,
+        "trigger reference is stored while mounted"
+      );
+
+      rendered.value = false;
+      await rerender();
+      await settled();
+
+      assert.strictEqual(
+        closeCalls,
+        0,
+        "onClose is not invoked when tearing down an unopened menu"
+      );
+      assert.strictEqual(
+        hasCalls,
+        0,
+        "teardown does not call trackedSet#has for an unregistered menu"
+      );
+      assert.strictEqual(
+        api._trigger,
+        undefined,
+        "trigger DOM reference is released on teardown"
+      );
+      assert.strictEqual(
+        api.content,
+        undefined,
+        "content DOM reference is released on teardown"
+      );
+
+      await menuService.close(api);
+      assert.strictEqual(
+        hasCalls,
+        0,
+        "menuService.close does not call trackedSet#has for an unregistered menu"
+      );
+    } finally {
+      menuService.registeredMenus = originalRegisteredMenus;
+    }
+  });
+
+  test("tearing down an opened menu releases DOM references after closing", async function (assert) {
+    const rendered = tracked(true);
+    let api;
+    const onRegisterApi = (instance) => (api = instance);
+
+    await render(
+      <template>
+        {{#if rendered.value}}
+          <DMenu
+            @content="content"
+            @inline={{true}}
+            @label="label"
+            @onRegisterApi={{onRegisterApi}}
+          />
+        {{/if}}
+      </template>
+    );
+
+    await click(".fk-d-menu__trigger");
+    assert.dom(".fk-d-menu").exists();
+
+    rendered.value = false;
+    await rerender();
+    await settled();
+
+    assert.strictEqual(
+      api._trigger,
+      undefined,
+      "trigger DOM reference is released after closing on teardown"
+    );
+    assert.strictEqual(
+      api.content,
+      undefined,
+      "content DOM reference is released after closing on teardown"
+    );
+  });
 });

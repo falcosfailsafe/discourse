@@ -149,7 +149,20 @@ export default class DTooltipInstance extends FloatKitInstance {
 
   @action
   destroy() {
-    this.close();
-    this.tearDownListeners();
+    if (this._trigger) {
+      this.tearDownListeners();
+    }
+    this.openedByDelayedHover = false;
+
+    if (this.expanded) {
+      this.close().finally(() => {
+        this._trigger = undefined;
+        this.content = undefined;
+      });
+    } else {
+      this.tooltip.registeredTooltips.delete(this);
+      this._trigger = undefined;
+      this.content = undefined;
+    }
   }
 }
