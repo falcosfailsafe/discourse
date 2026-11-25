@@ -36,11 +36,29 @@ const POST_COOKED_DECORATORS = [
 
 export const STREAM_HTML_DECORATOR = Symbol("stream-html-decorator");
 
+// Per-decorator sub-state maps are keyed by decorator function inside a WeakMap
+// rather than stored directly as keys on the persistent `decoratorState`
+// trackedMap. Otherwise, per-instance or bound `extraDecorators` (such as
+// PostQuotedContent's #highlightOriginalText) are strongly retained across
+// post cloak/uncloak cycles along with their closures and detached DOM trees.
+const DECORATOR_SUB_STATES = new WeakMap();
+
+function getDecoratorSubStates(rootState) {
+  let subStates = DECORATOR_SUB_STATES.get(rootState);
+  if (!subStates) {
+    subStates = new WeakMap();
+    DECORATOR_SUB_STATES.set(rootState, subStates);
+  }
+  return subStates;
+}
+
 export default class PostCookedHtml extends Component {
   @service currentUser;
 
   #pendingDecoratorCleanup = [];
-  #decoratorState = this.args.decoratorState || trackedMap();
+  #decoratorStates = this.args.decoratorState
+    ? getDecoratorSubStates(this.args.decoratorState)
+    : new WeakMap();
 
   willDestroy() {
     super.willDestroy(...arguments);
@@ -97,12 +115,10 @@ export default class PostCookedHtml extends Component {
 
     decorators.forEach((decorator) => {
       try {
-        let decoratorState;
-        if (this.#decoratorState.has(decorator)) {
-          decoratorState = this.#decoratorState.get(decorator);
-        } else {
+        let decoratorState = this.#decoratorStates.get(decorator);
+        if (!decoratorState) {
           decoratorState = trackedMap();
-          this.#decoratorState.set(decorator, decoratorState);
+          this.#decoratorStates.set(decorator, decoratorState);
         }
 
         const owner = getOwner(this);

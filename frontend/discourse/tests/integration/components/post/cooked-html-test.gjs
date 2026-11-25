@@ -1,8 +1,12 @@
+import { tracked } from "@glimmer/tracking";
 import { getOwner } from "@ember/owner";
+import { trackedMap } from "@ember/reactive/collections";
 import { click, render, settled } from "@ember/test-helpers";
 import { module, test } from "qunit";
 import PostCookedHtml from "discourse/components/post/cooked-html";
+import PostQuotedContent from "discourse/components/post/quoted-content";
 import { setupRenderingTest } from "discourse/tests/helpers/component-test";
+import pretender, { response } from "discourse/tests/helpers/create-pretender";
 
 function renderComponent(post, { highlightTerm } = {}) {
   return render(
@@ -169,5 +173,142 @@ module("Integration | Component | Post | PostCookedHtml", function (hooks) {
         "open",
         "the details tag remains closed after re-rendering"
       );
+  });
+
+  test("preserves decorator state across unmount/remount without storing decorator functions strongly", async function (assert) {
+    let fetchCount = 0;
+    pretender.get("/posts/by_number/1/2", () => {
+      fetchCount += 1;
+      return response({
+        id: 456,
+        post_number: 2,
+        topic_id: 1,
+        username: "alice",
+        cooked: "<p>Full quoted post body</p>",
+      });
+    });
+
+    this.post.cooked = `
+      <details><summary>Summary</summary><p>Body</p></details>
+      <aside class="quote" data-username="alice" data-post="2" data-topic="1">
+        <div class="title"><div class="quote-controls"></div>alice:</div>
+        <blockquote><p>Quoted excerpt</p></blockquote>
+      </aside>
+    `;
+
+    const seenByStaticDecorator = [];
+    function staticExtraDecorator(_el, { decoratorState }) {
+      const count = (decoratorState.get("runs") ?? 0) + 1;
+      decoratorState.set("runs", count);
+      seenByStaticDecorator.push(count);
+    }
+
+    class State {
+      @tracked visible = true;
+      @tracked extraDecorators = [staticExtraDecorator, () => {}];
+      decoratorState = trackedMap();
+    }
+
+    const state = new State();
+    const post = this.post;
+
+    await render(
+      <template>
+        {{#if state.visible}}
+          <PostCookedHtml
+            @decoratorState={{state.decoratorState}}
+            @extraDecorators={{state.extraDecorators}}
+            @post={{post}}
+          />
+        {{/if}}
+      </template>
+    );
+
+    await click("details > summary");
+    await click("aside.quote .quote-toggle");
+
+    assert.dom("details").hasAttribute("open", "");
+    assert.dom("aside.quote .expanded-quote").includesText("Full quoted post");
+    assert.strictEqual(fetchCount, 1);
+
+    // Simulate post cloaking and uncloaking with a fresh per-instance extra decorator
+    state.visible = false;
+    await settled();
+
+    state.extraDecorators = [staticExtraDecorator, () => {}];
+    state.visible = true;
+    await settled();
+
+    assert
+      .dom("details")
+      .hasAttribute("open", "", "details state persists across cloak/uncloak");
+    assert
+      .dom("aside.quote .expanded-quote")
+      .includesText(
+        "Full quoted post",
+        "expanded quote state persists across cloak/uncloak"
+      );
+    assert.strictEqual(
+      fetchCount,
+      1,
+      "cached quoted post is reused without refetching"
+    );
+    assert.deepEqual(
+      seenByStaticDecorator,
+      [1, 2],
+      "static extra decorators retain their sub-state across cloak/uncloak"
+    );
+    assert.strictEqual(
+      state.decoratorState.size,
+      0,
+      "decorator functions are not stored as strong keys on decoratorState"
+    );
+  });
+
+  test("PostQuotedContent does not accumulate function keys in shared decoratorState across remounts", async function (assert) {
+    class State {
+      @tracked visible = true;
+      decoratorState = trackedMap();
+    }
+
+    const state = new State();
+    const post = this.post;
+
+    await render(
+      <template>
+        {{#if state.visible}}
+          <PostQuotedContent
+            @collapsedContent="<p>Quoted text</p>"
+            @decoratorState={{state.decoratorState}}
+            @id="quote-id-1-2-0"
+            @post={{post}}
+            @quotedPostNumber={{2}}
+            @quotedTopicId={{1}}
+            @quotedUsername="alice"
+          />
+        {{/if}}
+      </template>
+    );
+
+    for (let i = 0; i < 3; i++) {
+      state.visible = false;
+      await settled();
+      state.visible = true;
+      await settled();
+    }
+
+    const functionKeys = [...state.decoratorState.keys()].filter(
+      (key) => typeof key === "function"
+    );
+    assert.strictEqual(
+      functionKeys.length,
+      0,
+      "no per-instance decorator closures are retained in shared decoratorState"
+    );
+    assert.strictEqual(
+      state.decoratorState.size,
+      0,
+      "unexpanded quote does not leak entries into decoratorState across remounts"
+    );
   });
 });
